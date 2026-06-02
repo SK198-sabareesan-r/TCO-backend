@@ -1,0 +1,175 @@
+{
+  "version": "1.0",
+  "description": "KPI mappings for cloud migration: service name mappings, region mappings, instance mappings, and query parameters",
+  
+  "service_name_mappings": {
+    "ec2": {
+      "aws_names": ["EC2", "Elastic Compute Cloud", "Amazon EC2", "ec2"],
+      "gcp_names": ["Compute Engine", "GCE", "Google Compute Engine", "compute engine"],
+      "azure_names": ["Virtual Machines", "Azure VM", "VM", "virtual machines", "azure vm"]
+    },
+    "s3": {
+      "aws_names": ["S3", "Simple Storage Service", "Amazon S3", "s3"],
+      "gcp_names": ["Cloud Storage", "GCS", "Google Cloud Storage", "cloud storage"],
+      "azure_names": ["Blob Storage", "Azure Blob", "blob storage", "azure blob storage", "Storage Acc", "storage acc"]
+    },
+    "rds": {
+      "aws_names": ["RDS", "Relational Database Service", "Amazon RDS", "rds"],
+      "gcp_names": ["Cloud SQL", "AlloyDB", "cloud sql", "alloydb"],
+      "azure_names": ["Azure SQL Database", "SQL Database", "azure sql", "sql database", "SQL DBs", "sql dbs", "PostgreSQL Flexible", "postgresql flexible"]
+    },
+    "vpc": {
+      "aws_names": ["VPC", "Virtual Private Cloud", "Amazon VPC", "vpc"],
+      "gcp_names": ["VPC", "Virtual Private Cloud", "Google VPC", "vpc"],
+      "azure_names": ["Virtual Network", "VNet", "Azure VNet", "vnet", "virtual network"]
+    },
+    "lambda": {
+      "aws_names": ["Lambda", "AWS Lambda", "lambda"],
+      "gcp_names": ["Cloud Functions", "Cloud Run", "cloud functions", "cloud run"],
+      "azure_names": ["Azure Functions", "Functions", "azure functions", "functions"]
+    }
+  },
+  
+  "region_mappings": [
+    {"aws_region_code":"us-east-1","aws_region_name":"US East (N. Virginia)","aws_location":"Virginia, USA","azure_region":"East US","azure_programmatic_name":"eastus","gcp_region":"us-east1","gcp_location":"South Carolina, USA"},
+    {"aws_region_code":"us-east-1","aws_region_name":"US East (N. Virginia)","aws_location":"Virginia, USA","azure_region":"East US","azure_programmatic_name":"eastus","gcp_region":"us-central1","gcp_location":"Iowa, USA"},
+    {"aws_region_code":"af-south-1","aws_region_name":"Africa (Cape Town)","aws_location":"Cape Town, South Africa","azure_region":"South Africa West","azure_programmatic_name":"southafricawest","gcp_region":"africa-south1","gcp_location":"Johannesburg, South Africa"},
+    {"aws_region_code":"ap-east-1","aws_region_name":"Asia Pacific (Hong Kong)","aws_location":"Hong Kong","azure_region":"East Asia","azure_programmatic_name":"eastasia","gcp_region":"asia-east2","gcp_location":"Hong Kong"},
+    {"aws_region_code":"ap-east-2","aws_region_name":"Asia Pacific (Taipei)","aws_location":"Taipei, Taiwan","azure_region":"East Asia","azure_programmatic_name":"eastasia","gcp_region":"asia-east1","gcp_location":"Taiwan"},
+    {"aws_region_code":"ap-south-1","aws_region_name":"Asia Pacific (Mumbai)","aws_location":"Mumbai, India","azure_region":"Central India","azure_programmatic_name":"centralindia","gcp_region":"asia-south1","gcp_location":"Mumbai, India"},
+    {"aws_region_code":"ap-south-2","aws_region_name":"Asia Pacific (Hyderabad)","aws_location":"Hyderabad, India","azure_region":"Central India","azure_programmatic_name":"centralindia","gcp_region":"asia-south2","gcp_location":"Delhi, India"},
+    {"aws_region_code":"ap-southeast-1","aws_region_name":"Asia Pacific (Singapore)","aws_location":"Singapore","azure_region":"Southeast Asia","azure_programmatic_name":"southeastasia","gcp_region":"asia-southeast1","gcp_location":"Singapore"},
+    {"aws_region_code":"ap-southeast-2","aws_region_name":"Asia Pacific (Sydney)","aws_location":"Sydney, Australia","azure_region":"Australia East","azure_programmatic_name":"australiaeast","gcp_region":"australia-southeast1","gcp_location":"Sydney, Australia"},
+    {"aws_region_code":"ap-southeast-3","aws_region_name":"Asia Pacific (Jakarta)","aws_location":"Jakarta, Indonesia","azure_region":"Indonesia Central","azure_programmatic_name":"indonesiacentral","gcp_region":"asia-southeast2","gcp_location":"Jakarta, Indonesia"},
+    {"aws_region_code":"ap-southeast-4","aws_region_name":"Asia Pacific (Melbourne)","aws_location":"Melbourne, Australia","azure_region":"Australia Southeast","azure_programmatic_name":"australiasoutheast","gcp_region":"australia-southeast2","gcp_location":"Melbourne, Australia"},
+    {"aws_region_code":"ap-southeast-5","aws_region_name":"Asia Pacific (Malaysia)","aws_location":"Malaysia","azure_region":"Malaysia West","azure_programmatic_name":"malaysiawest","gcp_region":"asia-southeast1","gcp_location":"Singapore (closest)"},
+    {"aws_region_code":"ap-southeast-6","aws_region_name":"Asia Pacific (New Zealand)","aws_location":"New Zealand","azure_region":"New Zealand North","azure_programmatic_name":"newzealandnorth","gcp_region":"australia-southeast1","gcp_location":"Sydney (closest)"},
+    {"aws_region_code":"ap-southeast-7","aws_region_name":"Asia Pacific (Thailand)","aws_location":"Thailand","azure_region":"Southeast Asia","azure_programmatic_name":"southeastasia","gcp_region":"asia-southeast1","gcp_location":"Singapore (closest)"},
+    {"aws_region_code":"ap-northeast-1","aws_region_name":"Asia Pacific (Tokyo)","aws_location":"Tokyo, Japan","azure_region":"Japan East","azure_programmatic_name":"japaneast","gcp_region":"asia-northeast1","gcp_location":"Tokyo, Japan"},
+    {"aws_region_code":"ap-northeast-2","aws_region_name":"Asia Pacific (Seoul)","aws_location":"Seoul, South Korea","azure_region":"Korea Central","azure_programmatic_name":"koreacentral","gcp_region":"asia-northeast3","gcp_location":"Seoul, South Korea"},
+    {"aws_region_code":"ap-northeast-3","aws_region_name":"Asia Pacific (Osaka)","aws_location":"Osaka, Japan","azure_region":"Japan West","azure_programmatic_name":"japanwest","gcp_region":"asia-northeast2","gcp_location":"Osaka, Japan"},
+    {"aws_region_code":"ca-central-1","aws_region_name":"Canada (Central)","aws_location":"Canada","azure_region":"Canada Central","azure_programmatic_name":"canadacentral","gcp_region":"northamerica-northeast1","gcp_location":"Montreal, Canada"},
+    {"aws_region_code":"ca-west-1","aws_region_name":"Canada (Calgary)","aws_location":"Calgary, Canada","azure_region":"Canada Central","azure_programmatic_name":"canadacentral","gcp_region":"northamerica-northeast2","gcp_location":"Toronto, Canada"},
+    {"aws_region_code":"eu-central-1","aws_region_name":"Europe (Frankfurt)","aws_location":"Frankfurt, Germany","azure_region":"Germany West Central","azure_programmatic_name":"germanywestcentral","gcp_region":"europe-west3","gcp_location":"Frankfurt, Germany"},
+    {"aws_region_code":"eu-central-2","aws_region_name":"Europe (Zurich)","aws_location":"Zurich, Switzerland","azure_region":"Switzerland North","azure_programmatic_name":"switzerlandnorth","gcp_region":"europe-west6","gcp_location":"Zurich, Switzerland"},
+    {"aws_region_code":"eu-west-1","aws_region_name":"Europe (Ireland)","aws_location":"Ireland","azure_region":"North Europe","azure_programmatic_name":"northeurope","gcp_region":"europe-west1","gcp_location":"Belgium"},
+    {"aws_region_code":"eu-west-2","aws_region_name":"Europe (London)","aws_location":"London, UK","azure_region":"UK South","azure_programmatic_name":"uksouth","gcp_region":"europe-west2","gcp_location":"London, UK"},
+    {"aws_region_code":"eu-west-3","aws_region_name":"Europe (Paris)","aws_location":"Paris, France","azure_region":"France Central","azure_programmatic_name":"francecentral","gcp_region":"europe-west9","gcp_location":"Paris, France"},
+    {"aws_region_code":"eu-north-1","aws_region_name":"Europe (Stockholm)","aws_location":"Stockholm, Sweden","azure_region":"Sweden Central","azure_programmatic_name":"swedencentral","gcp_region":"europe-north1","gcp_location":"Finland"},
+    {"aws_region_code":"eu-south-1","aws_region_name":"Europe (Milan)","aws_location":"Milan, Italy","azure_region":"Italy North","azure_programmatic_name":"italynorth","gcp_region":"europe-west8","gcp_location":"Milan, Italy"},
+    {"aws_region_code":"eu-south-2","aws_region_name":"Europe (Spain)","aws_location":"Spain","azure_region":"Spain Central","azure_programmatic_name":"spaincentral","gcp_region":"europe-southwest1","gcp_location":"Madrid, Spain"},
+    {"aws_region_code":"il-central-1","aws_region_name":"Israel (Tel Aviv)","aws_location":"Tel Aviv, Israel","azure_region":"Israel Central","azure_programmatic_name":"israelcentral","gcp_region":"me-west1","gcp_location":"Tel Aviv, Israel"},
+    {"aws_region_code":"me-south-1","aws_region_name":"Middle East (Bahrain)","aws_location":"Bahrain","azure_region":"UAE North","azure_programmatic_name":"uaenorth","gcp_region":"me-central1","gcp_location":"Doha"},
+    {"aws_region_code":"me-central-1","aws_region_name":"Middle East (UAE)","aws_location":"UAE","azure_region":"UAE Central","azure_programmatic_name":"uaecentral","gcp_region":"me-central1","gcp_location":"Doha"},
+    {"aws_region_code":"mx-central-1","aws_region_name":"Mexico (Central)","aws_location":"Mexico","azure_region":"Mexico Central","azure_programmatic_name":"mexicocentral","gcp_region":"northamerica-south1","gcp_location":"Mexico"},
+    {"aws_region_code":"sa-east-1","aws_region_name":"South America (São Paulo)","aws_location":"São Paulo, Brazil","azure_region":"Brazil South","azure_programmatic_name":"brazilsouth","gcp_region":"southamerica-east1","gcp_location":"São Paulo, Brazil"},
+    {"aws_region_code":"us-east-1","aws_region_name":"US East (N. Virginia)","aws_location":"Virginia, USA","azure_region":"East US","azure_programmatic_name":"eastus","gcp_region":"us-east4","gcp_location":"Northern Virginia, USA"},
+    {"aws_region_code":"us-east-2","aws_region_name":"US East (Ohio)","aws_location":"Ohio, USA","azure_region":"East US 2","azure_programmatic_name":"eastus2","gcp_region":"us-east5","gcp_location":"Columbus, USA"},
+    {"aws_region_code":"us-west-1","aws_region_name":"US West (N. California)","aws_location":"California, USA","azure_region":"West US","azure_programmatic_name":"westus","gcp_region":"us-west2","gcp_location":"Los Angeles, USA"},
+    {"aws_region_code":"us-west-2","aws_region_name":"US West (Oregon)","aws_location":"Oregon, USA","azure_region":"West US 2","azure_programmatic_name":"westus2","gcp_region":"us-west1","gcp_location":"Oregon, USA"}
+  ],
+  
+  "mapping_fields": {
+    "ec2": {
+      "description": "Fields to consider when mapping GCP Compute Engine or Azure Virtual Machines to AWS EC2",
+      "required_fields": [
+        "region",
+        "instance_type",
+        "vcpu",
+        "memory",
+        "operating_system",
+        "storage"
+      ],
+      "field_aliases": {
+        "region": ["region", "location", "zone", "availability_zone", "regioncode"],
+        "instance_type": ["instance_type", "instancetype", "machine_type", "vm_size", "size"],
+        "vcpu": ["vcpu", "vcpus", "cpu", "cores", "core_count", "processor_count"],
+        "memory": ["memory", "memory_gib", "ram", "memory_gb", "ram_gb"],
+        "operating_system": ["operating_system", "os", "operatingsystem", "platform", "image"],
+        "storage": ["storage", "disk", "ebs", "volume", "disk_size", "storage_amount"]
+      }
+    },
+    "s3": {
+      "description": "Fields to consider when mapping GCP Cloud Storage or Azure Blob Storage to AWS S3",
+      "required_fields": [
+        "region",
+        "storage_class",
+        "storage_amount"
+      ],
+      "field_aliases": {
+        "region": ["region", "location", "zone", "regioncode"],
+        "storage_class": ["storage_class", "storageclass", "tier", "access_tier", "storage_tier", "class", "sku"],
+        "storage_amount": ["storage", "storage_amount", "size", "capacity", "storage_size", "data_size"]
+      }
+    },
+    "rds": {
+      "description": "Fields to consider when mapping GCP Cloud SQL/AlloyDB or Azure SQL Database to AWS RDS",
+      "required_fields": [
+        "database_engine",
+        "region",
+        "storage"
+      ],
+      "field_aliases": {
+        "database_engine": ["database_engine", "databaseengine", "engine", "db_engine", "database_type", "db_type"],
+        "region": ["region", "location", "zone", "regioncode"],
+        "storage": ["storage", "disk", "storage_size", "disk_size", "capacity"]
+      }
+    },
+    "vpc": {
+      "description": "Fields to consider when mapping GCP VPC or Azure VNet to AWS VPC",
+      "required_fields": [
+        "vpc_type",
+        "region"
+      ],
+      "field_aliases": {
+        "vpc_type": ["vpc", "vpc_type", "network", "network_type", "vnet", "virtual_network"],
+        "region": ["region", "location", "zone", "regioncode"]
+      }
+    },
+    "lambda": {
+      "description": "Fields to consider when mapping GCP Cloud Functions/Cloud Run or Azure Functions to AWS Lambda",
+      "required_fields": [
+        "free_tier",
+        "compute_time",
+        "runtime",
+        "memory"
+      ],
+      "field_aliases": {
+        "free_tier": ["free_tier", "freetier", "free", "tier", "pricing_tier"],
+        "compute_time": ["compute_time", "computetime", "execution_time", "duration", "timeout", "runtime_duration"],
+        "runtime": ["runtime", "language", "environment", "platform", "runtime_version"],
+        "memory": ["memory", "memory_mb", "ram", "memory_size", "allocated_memory"]
+      }
+    }
+  },
+  
+  "instance_mappings": {
+    "ec2": [],
+    "rds": [],
+    "s3": [],
+    "vpc": [],
+    "lambda": []
+  },
+  
+  "storage_class_mappings": {
+    "s3": {
+      "azure_to_aws": {
+        "standard_lrs": "General Purpose",
+        "standard_zrs": "General Purpose",
+        "standard_grs": "General Purpose",
+        "standard_ragrs": "General Purpose",
+        "standard_gzrs": "General Purpose",
+        "standard_ragzrs": "General Purpose",
+        "premium_lrs": "High Performance",
+        "premium_zrs": "High Performance"
+      },
+      "gcp_to_aws": {
+        "standard": "General Purpose",
+        "nearline": "Infrequent Access",
+        "coldline": "Archive",
+        "archive": "Archive"
+      }
+    }
+  }
+  
+}
