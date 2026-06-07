@@ -113,8 +113,9 @@ def normalize_region(region: str) -> str:
     if region in REGION_CODE_TO_NAME:
         return REGION_CODE_TO_NAME[region]
     
-    # Check Azure region mappings (case-insensitive)
-    azure_to_aws = {
+    # Check Azure and GCP region mappings (case-insensitive)
+    provider_region_to_aws = {
+        # Azure regions
         "central india": "Asia Pacific (Mumbai)",
         "centralindia": "Asia Pacific (Mumbai)",
         "east us": "US East (N. Virginia)",
@@ -145,10 +146,33 @@ def normalize_region(region: str) -> str:
         "canadacentral": "Canada (Central)",
         "brazil south": "South America (São Paulo)",
         "brazilsouth": "South America (São Paulo)",
+        # GCP regions
+        "asia-south1": "Asia Pacific (Mumbai)",
+        "asia-south2": "Asia Pacific (Mumbai)",
+        "us-east1": "US East (N. Virginia)",
+        "us-east4": "US East (N. Virginia)",
+        "us-east5": "US East (Ohio)",
+        "us-central1": "US East (N. Virginia)",
+        "us-west1": "US West (Oregon)",
+        "us-west2": "US West (N. California)",
+        "asia-southeast1": "Asia Pacific (Singapore)",
+        "asia-southeast2": "Asia Pacific (Singapore)",
+        "australia-southeast1": "Asia Pacific (Sydney)",
+        "australia-southeast2": "Asia Pacific (Sydney)",
+        "asia-northeast1": "Asia Pacific (Tokyo)",
+        "asia-northeast2": "Asia Pacific (Tokyo)",
+        "asia-northeast3": "Asia Pacific (Seoul)",
+        "europe-west1": "Europe (Ireland)",
+        "europe-west2": "Europe (London)",
+        "europe-west3": "Europe (Frankfurt)",
+        "europe-west9": "Europe (Paris)",
+        "europe-north1": "Europe (Ireland)",
+        "northamerica-northeast1": "Canada (Central)",
+        "southamerica-east1": "South America (São Paulo)",
     }
-    
-    if region_lower in azure_to_aws:
-        return azure_to_aws[region_lower]
+
+    if region_lower in provider_region_to_aws:
+        return provider_region_to_aws[region_lower]
     
     # Default fallback
     logger.warning(f"Unknown region '{region}', defaulting to US East (N. Virginia)")

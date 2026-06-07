@@ -433,19 +433,12 @@ Generate a PostgreSQL query that:
         try:
             client = _get_bedrock_client()
             
-            # Prepare request for Bedrock with prompt caching
-            # Cache the system prompt (static content: schema, KPI, rules, examples)
-            # This reduces input tokens by ~3000 tokens per call after the first call
+            # Prepare request for Bedrock (Claude 3 Sonnet)
+            # Note: Prompt caching not supported in Claude 3 Sonnet
             request_body = {
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": 2000,
-                "system": [
-                    {
-                        "type": "text",
-                        "text": system_prompt,
-                        "cache_control": {"type": "ephemeral"}  # Cache system prompt
-                    }
-                ],
+                "system": system_prompt,  # Simple string format for Claude 3
                 "messages": [
                     {
                         "role": "user",

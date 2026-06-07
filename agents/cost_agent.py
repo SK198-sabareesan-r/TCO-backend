@@ -336,11 +336,16 @@ def calculate_and_compare_costs(
           - costs             : ondemand costs for best_match
           - comparison        : current vs aws cost comparison
     """
+    logger.info(f"💰 [COST] Starting cost calculation")
+
     matches       = mapping_result.get("matches", [])
     service_type  = str(service_row.get("service_type", "ec2")).lower()
     current_cost  = service_row.get("current_monthly_cost_usd")
 
+    logger.info(f"💰 [COST] Service type: {service_type}, Matches found: {len(matches)}")
+
     if not matches:
+        logger.warning(f"⚠️ [COST] No matches to calculate costs for")
         return {
             "aws_matches":  [],
             "best_match":   {},

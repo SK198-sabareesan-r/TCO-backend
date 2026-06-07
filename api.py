@@ -35,9 +35,14 @@ from utils.token_tracker import get_token_stats
 
 load_dotenv()
 
+# Configure logging to terminal only
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler()
+    ],
+    force=True
 )
 logger = logging.getLogger(__name__)
 
@@ -419,54 +424,65 @@ async def migrate_async(
 ):
     """
     Asynchronous migration endpoint - Upload XLSX and get job ID for tracking
-    
+
     **Parameters:**
     - file: XLSX file containing cloud services
     - source_provider: Source cloud provider (Azure or GCP)
-    
+
     **Returns:**
     - Job ID for tracking progress
-    
+
     **Workflow:**
     1. Upload file → Get job_id
     2. Poll /jobs/{job_id} for status
     3. Download result from /download/{job_id} when completed
-    
+
     **Use Case:** Large files, long-running migrations, progress tracking
     """
+    logger.info(f"📥 [UPLOAD] Received file: {file.filename}, Provider: {source_provider}")
+
     # Validate file type
     if not file.filename.endswith((".xlsx", ".xls")):
+        logger.error(f"❌ [UPLOAD] Invalid file type: {file.filename}")
         raise HTTPException(
             status_code=400,
             detail="Invalid file type. Only .xlsx and .xls files are supported."
         )
-    
+
     # Validate source provider
     source_provider = source_provider.strip().title()
     if source_provider not in ["Azure", "Gcp", "GCP"]:
+        logger.error(f"❌ [UPLOAD] Invalid provider: {source_provider}")
         raise HTTPException(
             status_code=400,
             detail=f"Invalid source provider '{source_provider}'. Must be 'Azure' or 'GCP'."
         )
-    
+
     if source_provider.upper() == "GCP":
         source_provider = "GCP"
-    
+
+    logger.info(f"✅ [UPLOAD] Validated - Provider: {source_provider}")
+
     # Generate job ID
     job_id = str(uuid.uuid4())
-    
+    logger.info(f"🆔 [JOB] Created job ID: {job_id}")
+
     # Save file to temp location
     temp_dir = tempfile.mkdtemp()
     input_path = os.path.join(temp_dir, f"{source_provider.lower()}_{file.filename}")
     output_path = os.path.join(temp_dir, f"aws_estimate_{job_id}.xlsx")
-    
+
     try:
         contents = await file.read()
+        file_size = len(contents)
+        logger.info(f"💾 [FILE] Saving {file_size} bytes to {input_path}")
         with open(input_path, "wb") as f:
             f.write(contents)
+        logger.info(f"✅ [FILE] Saved successfully")
     except Exception as e:
+        logger.error(f"❌ [FILE] Failed to save: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
-    
+
     # Create job record
     jobs[job_id] = {
         "job_id": job_id,
@@ -481,12 +497,15 @@ async def migrate_async(
         "temp_dir": temp_dir,
         "filename": file.filename
     }
-    
+
+    logger.info(f"📋 [JOB] Job record created: {job_id}")
+
     # Add background task
     background_tasks.add_task(process_migration_job, job_id)
-    
-    logger.info(f"Created async job {job_id} for {file.filename}")
-    
+    logger.info(f"🚀 [JOB] Background task queued: {job_id}")
+
+    logger.info(f"✅ [UPLOAD] Complete - Job {job_id} ready for processing")
+
     return JobStatus(
         job_id=job_id,
         status="pending",
@@ -497,34 +516,73 @@ async def migrate_async(
 
 
 def process_migration_job(job_id: str):
-    """Background task to process migration job"""
+    """Background task to process migration job with progress updates"""
     try:
+        logger.info(f"⚙️ [PROCESSING] Starting job {job_id}")
+
         job = jobs[job_id]
         job["status"] = "processing"
-        job["message"] = "Processing migration..."
+        job["message"] = "📤 File uploaded successfully"
+        job["progress"] = 5
+
+        logger.info(f"📂 [PROCESSING] Input: {job['input_path']}")
+        logger.info(f"📂 [PROCESSING] Output: {job['output_path']}")
+        logger.info(f"🏢 [PROCESSING] Provider: {job['source_provider']} → {job['target_provider']}")
+
+        # Update: Validating file
+        job["message"] = "✅ Validating file format..."
         job["progress"] = 10
-        
-        logger.info(f"Starting job {job_id}")
-        
-        # Run pipeline
-        output_file = run_migration_pipeline(job["input_path"], job["output_path"])
-        
+
+        # Update: Starting pipeline
+        job["message"] = "⚙️ Starting analysis pipeline..."
+        job["progress"] = 15
+        logger.info(f"🚀 [PIPELINE] Starting migration pipeline...")
+
+        # TEST MODE: Process only first 5 services
+        TEST_MODE = True
+        limit = 5 if TEST_MODE else None
+
+        if TEST_MODE:
+            logger.info(f"⚠️ TEST MODE ENABLED: Processing only {limit} services")
+            job["message"] = f"⚠️ TEST MODE: Processing {limit} services only"
+
+        # Run pipeline with progress callback
+        job["message"] = "🔄 Loading services from Excel..."
+        job["progress"] = 20
+
+        output_file = run_migration_pipeline(
+            job["input_path"],
+            job["output_path"],
+            limit=limit,
+            progress_callback=lambda msg, pct: _update_job_progress(job_id, msg, pct)
+        )
+        logger.info(f"✅ [PIPELINE] Pipeline completed - Output: {output_file}")
+
         # Update job status
         job["status"] = "completed"
         job["progress"] = 100
-        job["message"] = "Migration completed successfully"
+        job["message"] = "✅ Analysis complete! Preparing download..."
         job["completed_at"] = datetime.utcnow().isoformat()
         job["result_url"] = f"/download/{job_id}"
-        
-        logger.info(f"Completed job {job_id}")
-        
+
+        logger.info(f"✅ [PROCESSING] Job {job_id} completed successfully")
+
     except Exception as e:
-        logger.error(f"Job {job_id} failed: {e}", exc_info=True)
+        logger.error(f"❌ [PROCESSING] Job {job_id} failed: {e}", exc_info=True)
+        job = jobs.get(job_id, {})
         job["status"] = "failed"
         job["progress"] = 0
-        job["message"] = "Migration failed"
+        job["message"] = f"❌ Migration failed: {str(e)}"
         job["error"] = str(e)
         job["completed_at"] = datetime.utcnow().isoformat()
+
+
+def _update_job_progress(job_id: str, message: str, progress: int):
+    """Helper to update job progress from pipeline"""
+    if job_id in jobs:
+        jobs[job_id]["message"] = message
+        jobs[job_id]["progress"] = progress
+        logger.debug(f"📊 Job {job_id}: {progress}% - {message}")
 
 
 
@@ -532,20 +590,24 @@ def process_migration_job(job_id: str):
 def get_job_status(job_id: str):
     """
     Get status of an async migration job
-    
+
     **Parameters:**
     - job_id: Job ID returned from /migrate/async
-    
+
     **Returns:**
     - Job status with progress (0-100)
     - Result URL when completed
     - Error message if failed
     """
+    logger.debug(f"📊 [STATUS] Checking job {job_id}")
+
     if job_id not in jobs:
+        logger.warning(f"⚠️ [STATUS] Job {job_id} not found")
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-    
+
     job = jobs[job_id]
-    
+    logger.debug(f"📊 [STATUS] Job {job_id}: {job['status']} - {job['progress']}%")
+
     return JobStatus(
         job_id=job["job_id"],
         status=job["status"],
@@ -562,18 +624,21 @@ def get_job_status(job_id: str):
 def download_result(job_id: str):
     """
     Download result XLSX for completed job
-    
+
     **Parameters:**
     - job_id: Job ID returned from /migrate/async
-    
+
     **Returns:**
     - XLSX file with migration results
     """
+    logger.info(f"⬇️ [DOWNLOAD] Request for job {job_id}")
+
     if job_id not in jobs:
+        logger.warning(f"⚠️ [DOWNLOAD] Job {job_id} not found")
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-    
+
     job = jobs[job_id]
-    
+
     if job["status"] != "completed":
         raise HTTPException(
             status_code=400,
@@ -733,7 +798,7 @@ if __name__ == "__main__":
     
     uvicorn.run(
         "api:app",
-        host="0.0.0.0",
+        host="localhost",
         port=8000,
         reload=True,
         log_level="info"

@@ -213,30 +213,59 @@ def process_single_service(service_row: dict) -> dict:
 # BATCH PROCESSOR
 # ─────────────────────────────────────────────────────────────────────────────
 
-def process_all_services(services: list[dict], output_path: str = None) -> list[dict]:
+def process_all_services(services: list[dict], output_path: str = None, limit: int = None, progress_callback=None) -> list[dict]:
     """
     Process all services from input XLSX and return enriched results.
     Saves incrementally after each service to avoid data loss.
-    
+
     Args:
         services: List of service dictionaries to process
         output_path: Path to save incremental results (optional)
+        limit: Maximum number of services to process (optional, for testing)
+        progress_callback: Callback function(message, progress_pct) for UI updates
     """
     results = []
+
+    # Apply limit if specified
+    if limit and limit > 0:
+        services = services[:limit]
+        logger.info(f"⚠️ LIMIT ENABLED: Processing only first {limit} services (out of {len(services)} total)")
+
     total = len(services)
 
     for idx, service_row in enumerate(services, 1):
-        logger.info(f"─── [{idx}/{total}] Processing service ───")
+        # Calculate progress: 30% to 95% range (25% already used for loading)
+        progress_pct = 30 + int((idx / total) * 65)
+
+        service_name = service_row.get('Service Name', 'Unknown')
+
+        # Update UI: Processing service
+        if progress_callback:
+            progress_callback(f"🔄 Processing service {idx}/{total}: {service_name}", progress_pct)
+
+        logger.info(f"🔄 ─── [{idx}/{total}] ({round((idx/total)*100,1)}%) Processing service ───")
+        logger.info(f"📋 Service: {service_name}")
+
+        # Update UI: Finding AWS matches
+        if progress_callback:
+            progress_callback(f"🔍 Finding AWS matches for {service_name}...", progress_pct + 1)
+
         result = process_single_service(service_row)
         results.append(result)
-        
+
+        # Update UI: Cost calculation
+        if progress_callback:
+            progress_callback(f"💰 Calculating costs for {service_name}...", progress_pct + 2)
+
+        logger.info(f"✅ [{idx}/{total}] Service processed successfully")
+
         # Incremental save after each service
         if output_path:
             try:
                 write_output_xlsx(results, output_path)
-                logger.debug(f"Incremental save: {idx}/{total} services saved to {output_path}")
+                logger.info(f"💾 Incremental save: {idx}/{total} services saved to {output_path}")
             except Exception as e:
-                logger.warning(f"Incremental save failed: {e}")
+                logger.warning(f"⚠️ Incremental save failed: {e}")
 
     logger.info(f"Processed {total} services.")
     return results
@@ -291,7 +320,7 @@ def print_summary(results: list[dict]):
 # MAIN PIPELINE ENTRY POINT
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_migration_pipeline(input_xlsx: str, output_xlsx: Optional[str] = None, source_provider: Optional[str] = None) -> str:
+def run_migration_pipeline(input_xlsx: str, output_xlsx: Optional[str] = None, source_provider: Optional[str] = None, limit: int = None, progress_callback=None) -> str:
     """
     Full end-to-end pipeline:
       Read XLSX → Map → Cost → Write XLSX
@@ -300,6 +329,8 @@ def run_migration_pipeline(input_xlsx: str, output_xlsx: Optional[str] = None, s
         input_xlsx:  Path to user's input XLSX with current cloud services.
         output_xlsx: Path for output XLSX (defaults to input_filename_aws_estimate.xlsx)
         source_provider: Source cloud provider (Azure or GCP) - overrides filename detection
+        limit: Maximum number of services to process (optional, for testing)
+        progress_callback: Callback function(message, progress_pct) for UI updates
 
     Returns:
         Path to the output XLSX file.
@@ -310,13 +341,21 @@ def run_migration_pipeline(input_xlsx: str, output_xlsx: Optional[str] = None, s
     logger.info(f"Starting migration pipeline: {input_xlsx}")
     if source_provider:
         logger.info(f"Source provider: {source_provider} (from user input)")
+    if limit:
+        logger.info(f"⚠️ TEST MODE: Will process only first {limit} services")
 
     # ── 1. Read input ─────────────────────────────────────────────────────────
+    if progress_callback:
+        progress_callback("📖 Reading Excel file...", 25)
+
     services = read_input_xlsx(input_xlsx, source_provider=source_provider)
     logger.info(f"Loaded {len(services)} services from {input_xlsx}")
 
+    if progress_callback:
+        progress_callback(f"✅ Loaded {len(services)} services. Starting analysis...", 30)
+
     # ── 2. Process all services (with incremental saves) ─────────────────────
-    results = process_all_services(services, output_path)
+    results = process_all_services(services, output_path, limit=limit, progress_callback=progress_callback)
 
     # ── 3. Print console summary ──────────────────────────────────────────────
     print_summary(results)

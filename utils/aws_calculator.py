@@ -885,17 +885,27 @@ def generate_calculator_link_sync(
 ) -> str:
     """
     Synchronous wrapper for generating calculator links.
-    
+
     Args:
         service_type: ec2, rds, s3, etc.
         instance_type: AWS instance type
         region: AWS region display name
         **kwargs: Additional parameters (os, tenancy, database_engine, etc.)
-    
+
     Returns:
         Shareable AWS Calculator link or empty string if failed
     """
     try:
+        # Check if event loop is already running
+        try:
+            loop = asyncio.get_running_loop()
+            # If we get here, event loop is running - disable calculator for now
+            logger.debug("Event loop already running, skipping calculator link generation")
+            return ""
+        except RuntimeError:
+            # No event loop running, safe to use asyncio.run()
+            pass
+
         if service_type.lower() == "ec2":
             return asyncio.run(generate_ec2_calculator_link(
                 instance_type=instance_type,
