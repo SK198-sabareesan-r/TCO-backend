@@ -50,3 +50,4 @@ Thumbs.db
 *.log
 tmp/
 temp/
+dev.log/

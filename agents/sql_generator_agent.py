@@ -718,6 +718,12 @@ Generate a PostgreSQL query that:
             SELECT {select_clause}
             FROM {table_name}
             WHERE {where_clause}
+                AND "vcpu" IS NOT NULL 
+                AND "vcpu" != 'NA' 
+                AND "vcpu" != ''
+                AND "memory" IS NOT NULL 
+                AND "memory" != 'NA' 
+                AND "memory" != ''
             ORDER BY
                 ABS(CAST("vcpu" AS INTEGER) - %s) ASC,
                 ABS(CAST(REPLACE("memory", ' GiB', '') AS FLOAT) - %s) ASC
