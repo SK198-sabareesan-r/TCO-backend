@@ -60,30 +60,78 @@ async def _click_add_service(page: Page):
 
 async def _select_service_card(page: Page, service_name: str) -> bool:
     """Search for and select a service card (e.g. 'Amazon EC2')."""
+    # Step 1: Use the search box to filter — this is critical to avoid wrong cards
     try:
-        # Use the search box on the "Add service" page
-        search = page.locator("input[placeholder*='search' i], input[aria-label*='search' i]").first
+        search = page.locator("input[placeholder*='search' i], input[aria-label*='search' i], input[aria-label='Find Service']").first
         if await search.is_visible(timeout=3000):
+            await search.clear()
             await search.fill(service_name)
-            await page.wait_for_timeout(1000)
+            await page.wait_for_timeout(1500)  # Wait for results to filter
     except Exception:
         pass
 
-    # Click the service card / button
+    # Step 2: Click the card with EXACT name match only
+    # Try exact match first to avoid partial matches (e.g. "S3" matching "S3 Glacier")
     for selector in [
-        f"button:has-text('{service_name}')",
-        f"[data-testid*='service-card']:has-text('{service_name}')",
-        f"li:has-text('{service_name}') button",
-        f"a:has-text('{service_name}')",
+        f"button[data-testid='{service_name}']",
+        f"h2:text-is('{service_name}')",
+        f"h3:text-is('{service_name}')",
     ]:
         try:
             card = page.locator(selector).first
-            if await card.is_visible(timeout=3000):
+            if await card.is_visible(timeout=2000):
                 await card.click()
                 await page.wait_for_timeout(2500)
                 return True
         except Exception:
             continue
+
+    # Step 3: Find card by exact heading text, then click its button
+    try:
+        # Find the card container that has exactly this service name as heading
+        card_container = page.locator(
+            f"[class*='card']:has(h2:text-is('{service_name}')), "
+            f"[class*='card']:has(h3:text-is('{service_name}')), "
+            f"li:has(h2:text-is('{service_name}')), "
+            f"li:has(h3:text-is('{service_name}'))"
+        ).first
+        if await card_container.is_visible(timeout=2000):
+            await card_container.click()
+            await page.wait_for_timeout(2500)
+            return True
+    except Exception:
+        pass
+
+    # Step 4: JavaScript exact match — only match cards whose title is exactly the service name
+    clicked = await page.evaluate("""
+        (serviceName) => {
+            // Find all headings (h2, h3) that exactly match the service name
+            const headings = [...document.querySelectorAll('h2, h3, [class*="title"], [class*="heading"]')];
+            for (const h of headings) {
+                if (h.textContent.trim() === serviceName) {
+                    // Click the heading's parent card or a button inside it
+                    const parent = h.closest('li, [class*="card"], [class*="item"], button, a') || h.parentElement;
+                    if (parent && parent.offsetParent !== null) {
+                        parent.click();
+                        return true;
+                    }
+                }
+            }
+            // Fallback: find buttons with exact text
+            const btns = [...document.querySelectorAll('button, a')];
+            for (const btn of btns) {
+                if (btn.textContent.trim() === serviceName && btn.offsetParent !== null) {
+                    btn.click();
+                    return true;
+                }
+            }
+            return false;
+        }
+    """, service_name)
+    if clicked:
+        await page.wait_for_timeout(2500)
+        return True
+
     return False
 
 
