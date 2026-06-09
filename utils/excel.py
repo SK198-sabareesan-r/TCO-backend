@@ -641,26 +641,51 @@ def _write_comparison_sheet(wb: Workbook, results: list[dict]):
     ws = wb.create_sheet("Cost Comparison", 3)
     ws.sheet_view.showGridLines = False
 
-    # Title banner
-    ws.merge_cells("A1:K1")
-    title_cell = ws["A1"]
-    title_cell.value = "Cloud Migration Cost Comparison: Current Provider vs AWS"
-    title_cell.font  = Font(name="Calibri", bold=True, size=14, color="FFFFFF")
-    title_cell.fill  = HEADER_FILL
-    title_cell.alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[1].height = 30
+    NUM_COLS = 11
 
+    # ── Row 1: Combined calculator link banner ────────────────────────────────
+    combined_link = ""
+    for r in results:
+        combined_link = r.get("combined_calculator_link", "")
+        if combined_link:
+            break
+
+    ws.merge_cells(f"A1:{get_column_letter(NUM_COLS)}1")
+    banner = ws["A1"]
+    if combined_link:
+        banner.value = f"🔗 Open ALL {len(results)} Services in AWS Calculator (Combined Estimate) — shows On-Demand prices by default"
+        banner.hyperlink = combined_link
+        banner.style = "Hyperlink"
+        banner.font  = Font(name="Calibri", bold=True, size=12, color="0563C1", underline="single")
+        banner.fill  = PatternFill("solid", fgColor="DEEAF1")
+    else:
+        banner.value = "ℹ️ Combined AWS Calculator link not available"
+        banner.font  = Font(name="Calibri", italic=True, size=11, color="595959")
+        banner.fill  = PatternFill("solid", fgColor="F2F2F2")
+    banner.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[1].height = 28
+
+    # ── Row 2: Note about cost difference ────────────────────────────────────
+    ws.merge_cells(f"A2:{get_column_letter(NUM_COLS)}2")
+    note = ws["A2"]
+    note.value = (
+        "ℹ️ Note: 'AWS Calculator' shows On-Demand prices. "
+        "'AWS Optimised' below uses Savings Plans / Reserved Instances — hence lower cost than the calculator total."
+    )
+    note.font  = Font(name="Calibri", italic=True, size=10, color="595959")
+    note.fill  = PatternFill("solid", fgColor="FFFCE6")
+    note.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    ws.row_dimensions[2].height = 24
+
+    # ── Row 3: Column headers ─────────────────────────────────────────────────
     cols = [
         "Service", "Current Provider", "Current Instance",
-        # AWS OnDemand
         "AWS OnDemand Hourly", "AWS OnDemand Monthly", "AWS OnDemand Annual",
-        # AWS Optimised
         "AWS Optimised Plan", "AWS Optimised Monthly", "AWS Optimised Annual",
-        # Savings vs current
         "Monthly Savings", "Annual Savings",
     ]
-    _header_row(ws, cols, row=2, fill=SECTION_FILL)
-    ws.row_dimensions[2].height = 32
+    _header_row(ws, cols, row=3, fill=SECTION_FILL)
+    ws.row_dimensions[3].height = 32
 
     totals = {
         "od_monthly": 0,      "od_annual": 0,
@@ -668,7 +693,7 @@ def _write_comparison_sheet(wb: Workbook, results: list[dict]):
         "savings_monthly": 0, "savings_annual": 0,
     }
 
-    for r_idx, result in enumerate(results, start=3):
+    for r_idx, result in enumerate(results, start=4):
         inp   = result.get("input", {})
         best  = result.get("best_match", {})
         opt   = result.get("optimised", {})
@@ -687,7 +712,7 @@ def _write_comparison_sheet(wb: Workbook, results: list[dict]):
         sav_a = round(float(cur_annual)  - float(opt_a), 2) if cur_monthly else None
 
         row_data = [
-            inp.get("service_name", f"Service-{r_idx-2}"),
+            inp.get("service_name", f"Service-{r_idx-3}"),
             inp.get("current_provider", ""),
             inp.get("instance_type") or f"{inp.get('vcpus','?')}vCPU/{inp.get('memory_gib','?')}GiB",
             od_h, od_m, od_a,
@@ -703,7 +728,6 @@ def _write_comparison_sheet(wb: Workbook, results: list[dict]):
                 fill = OPT_FILL if sav_m > 0 else WARN_FILL
             _data_cell(ws, r_idx, c_idx, val, fmt=fmt, fill=fill)
 
-        # Accumulate totals
         totals["od_monthly"]      += od_m
         totals["od_annual"]       += od_a
         totals["opt_monthly"]     += opt_m
@@ -712,23 +736,23 @@ def _write_comparison_sheet(wb: Workbook, results: list[dict]):
         totals["savings_annual"]  += sav_a if sav_a else 0
 
     # Totals row
-    total_row = len(results) + 3
+    total_row = len(results) + 4
     _data_cell(ws, total_row, 1, "TOTAL", bold=True, fill=SECTION_FILL)
     _data_cell(ws, total_row, 2, "", fill=SECTION_FILL)
     _data_cell(ws, total_row, 3, "", fill=SECTION_FILL)
-    _data_cell(ws, total_row, 4,  "", fill=SECTION_FILL)
-    _data_cell(ws, total_row, 5,  round(totals["od_monthly"], 2),      fmt=MONEY_FORMAT, bold=True, fill=SECTION_FILL)
-    _data_cell(ws, total_row, 6,  round(totals["od_annual"],  2),      fmt=MONEY_FORMAT, bold=True, fill=SECTION_FILL)
-    _data_cell(ws, total_row, 7,  "", fill=SECTION_FILL)
-    _data_cell(ws, total_row, 8, round(totals["opt_monthly"], 2),     fmt=MONEY_FORMAT, bold=True, fill=SECTION_FILL)
-    _data_cell(ws, total_row, 9, round(totals["opt_annual"],  2),     fmt=MONEY_FORMAT, bold=True, fill=SECTION_FILL)
+    _data_cell(ws, total_row, 4, "", fill=SECTION_FILL)
+    _data_cell(ws, total_row, 5, round(totals["od_monthly"],  2), fmt=MONEY_FORMAT, bold=True, fill=SECTION_FILL)
+    _data_cell(ws, total_row, 6, round(totals["od_annual"],   2), fmt=MONEY_FORMAT, bold=True, fill=SECTION_FILL)
+    _data_cell(ws, total_row, 7, "", fill=SECTION_FILL)
+    _data_cell(ws, total_row, 8, round(totals["opt_monthly"], 2), fmt=MONEY_FORMAT, bold=True, fill=SECTION_FILL)
+    _data_cell(ws, total_row, 9, round(totals["opt_annual"],  2), fmt=MONEY_FORMAT, bold=True, fill=SECTION_FILL)
     _data_cell(ws, total_row, 10, round(totals["savings_monthly"], 2), fmt=MONEY_FORMAT, bold=True, fill=OPT_FILL)
     _data_cell(ws, total_row, 11, round(totals["savings_annual"],  2), fmt=MONEY_FORMAT, bold=True, fill=OPT_FILL)
 
-    widths = [18, 16, 25, 20, 22, 22, 22, 22, 22, 20, 20]
+    widths = [22, 16, 25, 20, 22, 22, 26, 22, 22, 20, 20]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
-    ws.freeze_panes = "A3"
+    ws.freeze_panes = "A4"
 
 
 
