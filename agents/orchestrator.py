@@ -369,15 +369,21 @@ def run_migration_pipeline(input_xlsx: str, output_xlsx: Optional[str] = None, s
         progress_callback("🔗 Generating combined AWS Calculator link for all services...", 96)
 
     logger.info("🔗 Generating COMBINED calculator link for all services...")
+    combined_link = ""
     try:
         from utils.combined_calculator import generate_combined_calculator_link_sync
         combined_link = generate_combined_calculator_link_sync(results)
 
         if combined_link:
             logger.info(f"✅ Generated combined calculator link: {combined_link[:80]}...")
-            # Add combined link to all results
             for result in results:
                 result["combined_calculator_link"] = combined_link
+            # Pass combined link back to API via progress callback (3rd arg)
+            if progress_callback:
+                try:
+                    progress_callback("🔗 Combined AWS Calculator link ready!", 98, combined_link)
+                except TypeError:
+                    pass  # old callback signature without combined_link arg
         else:
             logger.warning("⚠️ Failed to generate combined calculator link")
             for result in results:

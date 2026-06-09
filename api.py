@@ -104,6 +104,7 @@ class JobStatus(BaseModel):
     completed_at: Optional[str] = None
     result_url: Optional[str] = None
     error: Optional[str] = None
+    combined_calculator_link: Optional[str] = None
 
 
 class MigrationSummary(BaseModel):
@@ -554,9 +555,12 @@ def process_migration_job(job_id: str):
             job["output_path"],
             source_provider=job["source_provider"],
             limit=limit,
-            progress_callback=lambda msg, pct: _update_job_progress(job_id, msg, pct)
+            progress_callback=lambda msg, pct, link="": _update_job_progress(job_id, msg, pct, link)
         )
         logger.info(f"✅ [PIPELINE] Pipeline completed - Output: {output_file}")
+
+        # Extract combined calculator link if pipeline stored it
+        combined_link = jobs.get(job_id, {}).get("combined_calculator_link", "")
 
         # Update job status
         job["status"] = "completed"
@@ -564,6 +568,8 @@ def process_migration_job(job_id: str):
         job["message"] = "✅ Analysis complete! Preparing download..."
         job["completed_at"] = datetime.utcnow().isoformat()
         job["result_url"] = f"/download/{job_id}"
+        if combined_link:
+            job["combined_calculator_link"] = combined_link
 
         logger.info(f"✅ [PROCESSING] Job {job_id} completed successfully")
 
@@ -577,11 +583,13 @@ def process_migration_job(job_id: str):
         job["completed_at"] = datetime.utcnow().isoformat()
 
 
-def _update_job_progress(job_id: str, message: str, progress: int):
+def _update_job_progress(job_id: str, message: str, progress: int, combined_link: str = ""):
     """Helper to update job progress from pipeline"""
     if job_id in jobs:
         jobs[job_id]["message"] = message
         jobs[job_id]["progress"] = progress
+        if combined_link:
+            jobs[job_id]["combined_calculator_link"] = combined_link
         logger.debug(f"📊 Job {job_id}: {progress}% - {message}")
 
 
@@ -616,7 +624,8 @@ def get_job_status(job_id: str):
         created_at=job["created_at"],
         completed_at=job.get("completed_at"),
         result_url=job.get("result_url"),
-        error=job.get("error")
+        error=job.get("error"),
+        combined_calculator_link=job.get("combined_calculator_link", ""),
     )
 
 
