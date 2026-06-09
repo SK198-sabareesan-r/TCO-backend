@@ -111,9 +111,9 @@ def normalize_region(region: str) -> str:
     
     # Check if already in display format
     if region.startswith("US ") or region.startswith("Asia Pacific") or \
-       region.startswith("Europe") or region.startswith("South America") or \
-       region.startswith("Canada") or region.startswith("Middle East") or \
-       region.startswith("Africa"):
+    region.startswith("Europe") or region.startswith("South America") or \
+    region.startswith("Canada") or region.startswith("Middle East") or \
+    region.startswith("Africa"):
         return region
     
     # Try direct mapping
@@ -886,6 +886,9 @@ def generate_calculator_link_sync(
     """
     Synchronous wrapper for generating calculator links.
 
+    Works with both sync and async contexts by running async code in a separate thread
+    when an event loop is already running (e.g., FastAPI).
+
     Args:
         service_type: ec2, rds, s3, etc.
         instance_type: AWS instance type
@@ -895,19 +898,26 @@ def generate_calculator_link_sync(
     Returns:
         Shareable AWS Calculator link or empty string if failed
     """
-    try:
-        # Check if event loop is already running
-        try:
-            loop = asyncio.get_running_loop()
-            # If we get here, event loop is running - disable calculator for now
-            logger.debug("Event loop already running, skipping calculator link generation")
-            return ""
-        except RuntimeError:
-            # No event loop running, safe to use asyncio.run()
-            pass
+    import concurrent.futures
 
+    def run_async_in_thread(coro):
+        """Run async coroutine in a separate thread with its own event loop."""
+        def _run():
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                return new_loop.run_until_complete(coro)
+            finally:
+                new_loop.close()
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(_run)
+            return future.result(timeout=120)  # 2 minute timeout
+
+    try:
+        # Determine which async function to call
         if service_type.lower() == "ec2":
-            return asyncio.run(generate_ec2_calculator_link(
+            coro = generate_ec2_calculator_link(
                 instance_type=instance_type,
                 region=region,
                 operating_system=kwargs.get("operating_system", "Linux"),
@@ -916,9 +926,9 @@ def generate_calculator_link_sync(
                 pricing_model=kwargs.get("pricing_model", "on-demand"),
                 usage_pct=kwargs.get("usage_pct", 100),
                 storage_gb=kwargs.get("storage_gb"),
-            ))
+            )
         elif service_type.lower() == "rds":
-            return asyncio.run(generate_rds_calculator_link(
+            coro = generate_rds_calculator_link(
                 instance_type=instance_type,
                 region=region,
                 database_engine=kwargs.get("database_engine", "MySQL"),
@@ -926,20 +936,35 @@ def generate_calculator_link_sync(
                 storage_type=kwargs.get("storage_type", "General Purpose SSD (gp2)"),
                 storage_gb=kwargs.get("storage_gb", 100),
                 num_instances=kwargs.get("num_instances", 1),
-            ))
+            )
         elif service_type.lower() == "s3":
             from utils.s3_calculator import generate_s3_calculator_link
-            return asyncio.run(generate_s3_calculator_link(
+            coro = generate_s3_calculator_link(
                 region=region,
                 storage_class=kwargs.get("storage_class", "S3 Standard"),
                 storage_amount_gb=kwargs.get("storage_amount_gb", 100),
                 put_requests_per_month=kwargs.get("put_requests_per_month", 10000),
                 get_requests_per_month=kwargs.get("get_requests_per_month", 100000),
                 data_transfer_out_gb=kwargs.get("data_transfer_out_gb", 10),
-            ))
+            )
         else:
             logger.warning(f"Calculator not supported for service type: {service_type}")
             return ""
+
+        # Check if event loop is running
+        try:
+            loop = asyncio.get_running_loop()
+            # Event loop is running - use thread pool to run async code
+            logger.debug("Event loop detected, running calculator in separate thread")
+            return run_async_in_thread(coro)
+        except RuntimeError:
+            # No event loop running, safe to use asyncio.run()
+            logger.debug("No event loop detected, using asyncio.run()")
+            return asyncio.run(coro)
+
+    except concurrent.futures.TimeoutError:
+        logger.error("Calculator link generation timed out after 120 seconds")
+        return ""
     except Exception as e:
         logger.error(f"Error in calculator link generation: {e}")
         return ""

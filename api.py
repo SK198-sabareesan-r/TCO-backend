@@ -544,7 +544,8 @@ def process_migration_job(job_id: str):
 
         if TEST_MODE:
             logger.info(f"⚠️ TEST MODE ENABLED: Processing only {limit} services")
-            job["message"] = f"⚠️ TEST MODE: Processing {limit} services only"
+            job["message"] = f"⚠️ TEST MODE: Processing first {limit} services only"
+            job["progress"] = 18
 
         # Run pipeline with progress callback
         job["message"] = "🔄 Loading services from Excel..."
@@ -553,6 +554,7 @@ def process_migration_job(job_id: str):
         output_file = run_migration_pipeline(
             job["input_path"],
             job["output_path"],
+            source_provider=job["source_provider"],
             limit=limit,
             progress_callback=lambda msg, pct: _update_job_progress(job_id, msg, pct)
         )

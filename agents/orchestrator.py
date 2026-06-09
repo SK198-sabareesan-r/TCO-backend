@@ -235,27 +235,34 @@ def process_all_services(services: list[dict], output_path: str = None, limit: i
 
     for idx, service_row in enumerate(services, 1):
         # Calculate progress: 30% to 95% range (25% already used for loading)
-        progress_pct = 30 + int((idx / total) * 65)
+        base_progress = 30 + int((idx / total) * 65)
 
         service_name = service_row.get('Service Name', 'Unknown')
 
-        # Update UI: Processing service
-        if progress_callback:
-            progress_callback(f"🔄 Processing service {idx}/{total}: {service_name}", progress_pct)
-
+        # Phase 1: Start processing
         logger.info(f"🔄 ─── [{idx}/{total}] ({round((idx/total)*100,1)}%) Processing service ───")
         logger.info(f"📋 Service: {service_name}")
-
-        # Update UI: Finding AWS matches
         if progress_callback:
-            progress_callback(f"🔍 Finding AWS matches for {service_name}...", progress_pct + 1)
+            progress_callback(f"🔄 [{idx}/{total}] Starting: {service_name}", base_progress)
+
+        # Phase 2: Finding AWS matches
+        if progress_callback:
+            progress_callback(f"🔍 [{idx}/{total}] Finding AWS matches: {service_name}", base_progress + 1)
+
+        # Phase 3: Execute mapping and cost calculation
+        if progress_callback:
+            progress_callback(f"💰 [{idx}/{total}] Calculating costs: {service_name}", base_progress + 2)
 
         result = process_single_service(service_row)
         results.append(result)
 
-        # Update UI: Cost calculation
+        # Phase 4: Generating calculator link
         if progress_callback:
-            progress_callback(f"💰 Calculating costs for {service_name}...", progress_pct + 2)
+            progress_callback(f"🔗 [{idx}/{total}] Generating calculator link: {service_name}", base_progress + 3)
+
+        # Phase 5: Service complete
+        if progress_callback:
+            progress_callback(f"✅ [{idx}/{total}] Completed: {service_name}", base_progress + 4)
 
         logger.info(f"✅ [{idx}/{total}] Service processed successfully")
 
