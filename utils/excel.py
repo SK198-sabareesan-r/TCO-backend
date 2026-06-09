@@ -334,38 +334,60 @@ def _write_summary_sheet(wb: Workbook, results: list[dict]):
     ws = wb.create_sheet("Summary", 0)
     ws.sheet_view.showGridLines = False
 
+    NUM_COLS = 13  # total data columns (no longer a separate combined column per row)
+
+    # ── Row 1: Combined calculator link banner ────────────────────────────────
+    combined_link = ""
+    for r in results:
+        combined_link = r.get("combined_calculator_link", "")
+        if combined_link:
+            break
+
+    # Merge A1 across all columns for the banner
+    ws.merge_cells(f"A1:{get_column_letter(NUM_COLS)}1")
+    banner = ws["A1"]
+    if combined_link:
+        banner.value = f"🔗 View ALL {len(results)} Services in AWS Calculator (Combined Estimate)"
+        banner.hyperlink = combined_link
+        banner.style = "Hyperlink"
+        banner.font  = Font(name="Calibri", bold=True, size=12, color="0563C1", underline="single")
+        banner.fill  = PatternFill("solid", fgColor="DEEAF1")  # light blue banner
+    else:
+        banner.value = "ℹ️ Combined AWS Calculator link not available (generated after all services are processed)"
+        banner.font  = Font(name="Calibri", italic=True, size=11, color="595959")
+        banner.fill  = PatternFill("solid", fgColor="F2F2F2")
+    banner.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[1].height = 28
+
+    # ── Row 2: Column headers ─────────────────────────────────────────────────
     title_cols = [
         "Service Name", "Type", "Provider",
         "Current Instance / Config",
         "Recommended AWS Instance", "AWS Region",
-        # Costs
         "AWS OnDemand Hourly", "AWS OnDemand Monthly", "AWS OnDemand Annual",
         "Optimised Plan", "Optimised Monthly", "Optimised Annual",
-        # Calculator Links
-        "AWS Calculator Link (Individual)", "AWS Calculator Link (Combined - All Services)",
+        "Individual AWS Calculator Link",
     ]
+    _header_row(ws, title_cols, row=2)
+    ws.row_dimensions[2].height = 36
 
-    _header_row(ws, title_cols, row=1)
-    ws.row_dimensions[1].height = 36
-
-    for r_idx, result in enumerate(results, start=2):
-        inp     = result.get("input", {})
-        matches = result.get("aws_matches", [])
-        best    = result.get("best_match", {})
-        opt     = result.get("optimised", {})
-        costs   = result.get("costs", {})
+    # ── Rows 3+: Data ─────────────────────────────────────────────────────────
+    for r_idx, result in enumerate(results, start=3):
+        inp   = result.get("input", {})
+        best  = result.get("best_match", {})
+        opt   = result.get("optimised", {})
+        costs = result.get("costs", {})
         calc_link = result.get("calculator_link", "")
-        combined_link = result.get("combined_calculator_link", "")
 
-        od_monthly   = costs.get("ondemand", {}).get("monthly_usd")
-        od_hourly    = costs.get("ondemand", {}).get("hourly_usd")
-        od_annual    = costs.get("ondemand", {}).get("annual_usd")
-        opt_monthly  = opt.get("monthly_usd")
-        opt_annual   = opt.get("annual_usd")
-        opt_plan     = opt.get("plan_label", "On-Demand")
+        od_hourly  = costs.get("ondemand", {}).get("hourly_usd")
+        od_monthly = costs.get("ondemand", {}).get("monthly_usd")
+        od_annual  = costs.get("ondemand", {}).get("annual_usd")
+        opt_monthly = opt.get("monthly_usd")
+        opt_annual  = opt.get("annual_usd")
+        opt_plan    = opt.get("plan_label", "On-Demand")
 
         row_data = [
-            inp.get("service_name", f"Service-{r_idx-1}"),
+            inp.get("service_name", f"Service-{r_idx-2}"),
             inp.get("service_type", ""),
             inp.get("current_provider", ""),
             inp.get("instance_type") or f"{inp.get('vcpus','?')}vCPU / {inp.get('memory_gib','?')}GiB",
@@ -378,7 +400,6 @@ def _write_summary_sheet(wb: Workbook, results: list[dict]):
             opt_monthly,
             opt_annual,
             calc_link,
-            combined_link,
         ]
 
         money_cols = {7, 8, 9, 11, 12}
@@ -386,21 +407,19 @@ def _write_summary_sheet(wb: Workbook, results: list[dict]):
         for c_idx, val in enumerate(row_data, 1):
             fmt  = MONEY_FORMAT if c_idx in money_cols else None
             cell = _data_cell(ws, r_idx, c_idx, val, fmt=fmt)
-
-            # Make calculator links clickable
-            if c_idx == 13 and val:  # Individual link
+            if c_idx == 13 and val:   # Individual link — make it a short display text
+                cell.value     = "Open in AWS Calculator →"
                 cell.hyperlink = val
-                cell.style = "Hyperlink"
-            elif c_idx == 14 and val:  # Combined link
-                cell.hyperlink = val
-                cell.style = "Hyperlink"
+                cell.style     = "Hyperlink"
+                cell.font      = Font(name="Calibri", size=10, color="0563C1", underline="single")
+                cell.alignment = Alignment(horizontal="center")
 
     # Column widths
-    widths = [18, 10, 10, 28, 22, 22, 18, 20, 20, 20, 20, 20, 50, 50]
+    widths = [22, 10, 10, 28, 22, 22, 18, 20, 20, 22, 20, 20, 30]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
-    ws.freeze_panes = "A2"
+    ws.freeze_panes = "A3"
 
 
 # ── Sheet 2 : All Matches ────────────────────────────────────────────────────

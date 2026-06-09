@@ -1,232 +1,480 @@
 """
 utils/combined_calculator.py
 -----------------------------
-Generate ONE AWS Calculator link containing ALL services.
+Generate ONE AWS Calculator link that contains ALL services.
+
+Strategy:
+  1. Open calculator.aws in a headless browser
+  2. For each service, click "Add service", fill details, click "Save and add service"
+  3. After all services are added, click "Share" → capture the single combined estimate URL
+
+The resulting URL looks like:
+  https://calculator.aws/#/estimate?id=<uuid>
+
+When opened, it shows ALL services in a single estimate with a grand-total monthly cost.
 """
 
 import asyncio
 import logging
-from playwright.async_api import async_playwright
-from utils.aws_calculator import normalize_region, normalize_os, accept_cookies, capture_share_link
+import re
+from typing import Optional
+from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeout
+
+from utils.aws_calculator import (
+    normalize_region,
+    normalize_os,
+    accept_cookies,
+    capture_share_link,
+    fill_input,
+    pick_option_safe,
+    select_dropdown_verified,
+)
 
 logger = logging.getLogger(__name__)
 
-EC2_URL = "https://calculator.aws/#/addService"
-RDS_URL = "https://calculator.aws/#/addService"
-S3_URL = "https://calculator.aws/#/addService"
+CALCULATOR_HOME = "https://calculator.aws/#/"
+ADD_SERVICE_URL = "https://calculator.aws/#/addService"
 
 
-async def generate_combined_calculator_link(results: list[dict], headless: bool = True) -> str:
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _click_add_service(page: Page):
+    """Click 'Add service' or 'Create estimate' to reach service picker."""
+    for selector in [
+        "button:has-text('Add service')",
+        "button[data-testid='add-service-button']",
+        "a:has-text('Add service')",
+    ]:
+        try:
+            btn = page.locator(selector).first
+            if await btn.is_visible(timeout=3000):
+                await btn.click()
+                await page.wait_for_timeout(1500)
+                return True
+        except Exception:
+            continue
+    return False
+
+
+async def _select_service_card(page: Page, service_name: str) -> bool:
+    """Search for and select a service card (e.g. 'Amazon EC2')."""
+    try:
+        # Use the search box on the "Add service" page
+        search = page.locator("input[placeholder*='search' i], input[aria-label*='search' i]").first
+        if await search.is_visible(timeout=3000):
+            await search.fill(service_name)
+            await page.wait_for_timeout(1000)
+    except Exception:
+        pass
+
+    # Click the service card / button
+    for selector in [
+        f"button:has-text('{service_name}')",
+        f"[data-testid*='service-card']:has-text('{service_name}')",
+        f"li:has-text('{service_name}') button",
+        f"a:has-text('{service_name}')",
+    ]:
+        try:
+            card = page.locator(selector).first
+            if await card.is_visible(timeout=3000):
+                await card.click()
+                await page.wait_for_timeout(2500)
+                return True
+        except Exception:
+            continue
+    return False
+
+
+async def _save_and_add(page: Page) -> bool:
+    """Click 'Save and add service' or 'Save and view summary'."""
+    for selector in [
+        "button[aria-label='Save and add service']",
+        "button:has-text('Save and add service')",
+        "button[aria-label='Save and view summary']",
+        "button:has-text('Save and view summary')",
+    ]:
+        try:
+            btn = page.locator(selector).first
+            if await btn.is_visible(timeout=3000):
+                await btn.click()
+                await page.wait_for_timeout(3000)
+                return True
+        except Exception:
+            continue
+
+    # JS fallback
+    clicked = await page.evaluate("""
+        () => {
+            const targets = ['Save and add service', 'Save and view summary'];
+            for (const text of targets) {
+                const btn = [...document.querySelectorAll('button')]
+                    .find(b => b.textContent.trim().includes(text));
+                if (btn) { btn.click(); return true; }
+            }
+            return false;
+        }
+    """)
+    await page.wait_for_timeout(3000)
+    return bool(clicked)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-service adders
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _add_ec2(page: Page, svc: dict, is_last: bool):
+    """Add an EC2 service to the open estimate."""
+    await _click_add_service(page)
+    if not await _select_service_card(page, "Amazon EC2"):
+        logger.warning(f"  ⚠️ Could not select EC2 card for {svc['name']}")
+        return
+
+    region    = normalize_region(svc["region"])
+    os_name   = normalize_os(svc["os"])
+    instance  = svc["instance"]
+    num       = str(svc.get("num_instances", 1))
+
+    # Description
+    try:
+        await fill_input(page, "input[aria-label='Description - optional']", svc["name"])
+    except Exception:
+        pass
+
+    # Region
+    await select_dropdown_verified(page, "Choose a Region", region)
+    await page.wait_for_timeout(800)
+
+    # OS
+    await select_dropdown_verified(page, "Operating system", os_name)
+
+    # Tenancy
+    tenancy_raw = svc.get("tenancy", "Shared")
+    tenancy_val = tenancy_raw if "Instances" in tenancy_raw else f"{tenancy_raw} Instances"
+    try:
+        await select_dropdown_verified(page, "Tenancy", tenancy_val)
+    except Exception:
+        pass
+
+    # Workload — consistent usage
+    try:
+        radio = page.locator("input[type='radio'][value='consistent']").first
+        if await radio.count() > 0:
+            await radio.check()
+    except Exception:
+        pass
+
+    # Number of instances
+    try:
+        await fill_input(page, "input[aria-label*='Number of instances']", num)
+    except Exception:
+        pass
+
+    # Instance type search + select
+    try:
+        search = page.locator("input[aria-label*='Search instance types']").first
+        await search.scroll_into_view_if_needed()
+        await search.click(force=True)
+        await search.fill(instance)
+        await page.wait_for_timeout(2000)
+
+        row_radio = page.locator(
+            f"tr:has-text('{instance}') input[type='radio']"
+        ).first
+        if await row_radio.count() > 0:
+            await row_radio.scroll_into_view_if_needed()
+            await row_radio.check()
+            await page.wait_for_timeout(600)
+    except Exception as e:
+        logger.debug(f"Instance type select error: {e}")
+
+    await _save_and_add(page)
+    logger.info(f"  ✅ EC2 added: {instance} ({region})")
+
+
+async def _add_rds(page: Page, svc: dict, is_last: bool):
+    """Add an RDS service to the open estimate."""
+    engine = svc.get("database_engine", "MySQL")
+
+    # Map engine to calculator service name
+    engine_map = {
+        "MySQL":      "Amazon RDS for MySQL",
+        "PostgreSQL": "Amazon RDS for PostgreSQL",
+        "MariaDB":    "Amazon RDS for MariaDB",
+        "SQL Server": "Amazon RDS for SQL Server",
+        "Oracle":     "Amazon RDS for Oracle",
+        "Aurora MySQL":     "Amazon Aurora MySQL-Compatible",
+        "Aurora PostgreSQL":"Amazon Aurora PostgreSQL-Compatible",
+    }
+    service_name = engine_map.get(engine, "Amazon RDS for MySQL")
+
+    await _click_add_service(page)
+    if not await _select_service_card(page, service_name):
+        # Fallback: search just "RDS"
+        await _click_add_service(page)
+        await _select_service_card(page, "Amazon RDS")
+
+    region   = normalize_region(svc["region"])
+    instance = svc["instance"]
+
+    try:
+        await fill_input(page, "input[aria-label='Description - optional']", svc["name"])
+    except Exception:
+        pass
+
+    # Region
+    await select_dropdown_verified(page, "Choose a Region", region)
+    await page.wait_for_timeout(800)
+
+    # Instance class search
+    try:
+        inputs = await page.locator("input[type='text'], input[type='search']").all()
+        for inp in inputs:
+            aria = await inp.get_attribute("aria-label") or ""
+            ph   = await inp.get_attribute("placeholder") or ""
+            if "instance" in aria.lower() or "class" in aria.lower() or "instance" in ph.lower():
+                await inp.scroll_into_view_if_needed()
+                await inp.click()
+                await inp.fill(instance)
+                await page.wait_for_timeout(1500)
+                await pick_option_safe(page, instance)
+                break
+    except Exception as e:
+        logger.debug(f"RDS instance class error: {e}")
+
+    await _save_and_add(page)
+    logger.info(f"  ✅ RDS added: {instance} ({engine}, {region})")
+
+
+async def _add_s3(page: Page, svc: dict, is_last: bool):
+    """Add an S3 service to the open estimate."""
+    await _click_add_service(page)
+    if not await _select_service_card(page, "Amazon S3"):
+        logger.warning(f"  ⚠️ Could not select S3 card for {svc['name']}")
+        return
+
+    region  = normalize_region(svc["region"])
+    storage = svc.get("storage_gb", 100)
+
+    try:
+        await fill_input(page, "input[aria-label='Description - optional']", svc["name"])
+    except Exception:
+        pass
+
+    # Region
+    await select_dropdown_verified(page, "Choose a Region", region)
+    await page.wait_for_timeout(800)
+
+    # Storage amount
+    try:
+        await fill_input(page, "input[aria-label*='S3 Standard storage']", str(storage))
+    except Exception:
+        try:
+            await fill_input(page, "input[aria-label*='storage amount']", str(storage))
+        except Exception:
+            pass
+
+    await _save_and_add(page)
+    logger.info(f"  ✅ S3 added: {storage} GB ({region})")
+
+
+async def _add_lambda(page: Page, svc: dict, is_last: bool):
+    """Add a Lambda service to the open estimate."""
+    await _click_add_service(page)
+    if not await _select_service_card(page, "AWS Lambda"):
+        logger.warning(f"  ⚠️ Could not select Lambda card for {svc['name']}")
+        return
+
+    try:
+        await fill_input(page, "input[aria-label='Description - optional']", svc["name"])
+    except Exception:
+        pass
+
+    region = normalize_region(svc["region"])
+    await select_dropdown_verified(page, "Choose a Region", region)
+
+    await _save_and_add(page)
+    logger.info(f"  ✅ Lambda added ({region})")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main combined generator
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def generate_combined_calculator_link(
+    results: list[dict],
+    headless: bool = True,
+) -> str:
     """
-    Generate ONE AWS Calculator link containing ALL services.
+    Open AWS Calculator once, add every service, then save the estimate and
+    return the single shareable link that contains ALL services.
 
     Args:
-        results: List of all service results from pipeline
-        headless: Run browser in headless mode
+        results:  Full pipeline results list (one entry per service row)
+        headless: Run Chromium headless (set False only for local debugging)
 
     Returns:
-        Single calculator link with all services
+        A URL like https://calculator.aws/#/estimate?id=<uuid>
+        or "" if something went wrong.
     """
+    # Build a clean list of services to add
+    services: list[dict] = []
+    for r in results:
+        best = r.get("best_match", {})
+        inp  = r.get("input", {})
+        itype = best.get("instance_type") or ""
+
+        svc_type = str(inp.get("service_type", "ec2")).lower()
+
+        # S3 doesn't have a real instance_type — still include it
+        if not itype and svc_type not in ("s3", "storage", "lambda", "vpc"):
+            continue
+
+        services.append({
+            "name":            inp.get("service_name") or inp.get("instance_type") or f"Service-{len(services)+1}",
+            "type":            svc_type,
+            "instance":        itype,
+            "region":          (best.get("regioncode") or best.get("location")
+                                or inp.get("region", "US East (N. Virginia)")),
+            "os":              best.get("operatingsystem") or inp.get("operating_system", "Linux"),
+            "tenancy":         best.get("tenancy") or inp.get("tenancy", "Shared"),
+            "database_engine": best.get("databaseengine") or inp.get("database_engine", "MySQL"),
+            "storage_gb":      inp.get("storage_gb", 100),
+            "num_instances":   int(inp.get("number_of_instances", 1)),
+        })
+
+    if not services:
+        logger.warning("No valid services to add to combined calculator")
+        return ""
+
+    logger.info(f"🔗 Generating COMBINED calculator link for {len(services)} services...")
+
     try:
-        # Filter results that have valid matches
-        valid_services = []
-        for r in results:
-            best = r.get("best_match", {})
-            inp = r.get("input", {})
-            if best.get("instance_type"):
-                valid_services.append({
-                    "name": inp.get("service_name", "Service"),
-                    "type": inp.get("service_type", "ec2").lower(),
-                    "instance": best.get("instance_type"),
-                    "region": best.get("regioncode") or best.get("location") or inp.get("region", "US East (N. Virginia)"),
-                    "os": best.get("operatingsystem") or inp.get("operating_system", "Linux"),
-                    "tenancy": best.get("tenancy") or inp.get("tenancy", "Shared"),
-                    "database_engine": best.get("databaseengine") or inp.get("database_engine"),
-                    "storage_gb": inp.get("storage_gb", 100),
-                })
-
-        if not valid_services:
-            logger.warning("No valid services to add to calculator")
-            return ""
-
-        logger.info(f"🔗 Generating COMBINED calculator link for {len(valid_services)} services")
-
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=headless,
-                args=["--no-sandbox", "--disable-setuid-sandbox"]
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage",
+                ],
             )
-            context = await browser.new_context(viewport={"width": 1920, "height": 1080})
+            context = await browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+            )
             page = await context.new_page()
 
-            # Start with blank calculator
-            await page.goto("https://calculator.aws/#/", wait_until="networkidle", timeout=45000)
+            # ── 1. Open calculator home ──────────────────────────────────────
+            logger.debug("Opening AWS Calculator home...")
+            await page.goto(CALCULATOR_HOME, wait_until="networkidle", timeout=45000)
             await page.wait_for_timeout(3000)
             await accept_cookies(page)
 
-            # Add each service
-            for idx, svc in enumerate(valid_services, 1):
-                logger.info(f"  [{idx}/{len(valid_services)}] Adding {svc['name']} ({svc['type']})...")
+            # Click "Create estimate" on the landing page if present
+            for sel in [
+                "a:has-text('Create estimate')",
+                "button:has-text('Create estimate')",
+                "a:has-text('Get started')",
+            ]:
+                try:
+                    btn = page.locator(sel).first
+                    if await btn.is_visible(timeout=2000):
+                        await btn.click()
+                        await page.wait_for_timeout(2000)
+                        break
+                except Exception:
+                    pass
+
+            # ── 2. Add each service ──────────────────────────────────────────
+            for idx, svc in enumerate(services):
+                is_last = idx == len(services) - 1
+                svc_type = svc["type"]
+                logger.info(f"  [{idx+1}/{len(services)}] Adding: {svc['name']} ({svc_type})")
 
                 try:
-                    if svc['type'] == 'ec2':
-                        await add_ec2_service(page, svc)
-                    elif svc['type'] == 'rds':
-                        await add_rds_service(page, svc)
-                    elif svc['type'] == 's3':
-                        await add_s3_service(page, svc)
-
-                    logger.info(f"    ✅ Added {svc['name']}")
+                    if svc_type in ("ec2", "vm"):
+                        await _add_ec2(page, svc, is_last)
+                    elif svc_type == "rds":
+                        await _add_rds(page, svc, is_last)
+                    elif svc_type in ("s3", "storage"):
+                        await _add_s3(page, svc, is_last)
+                    elif svc_type in ("lambda", "function"):
+                        await _add_lambda(page, svc, is_last)
+                    else:
+                        # Default: treat as EC2
+                        await _add_ec2(page, svc, is_last)
                 except Exception as e:
-                    logger.warning(f"    ⚠️ Failed to add {svc['name']}: {e}")
+                    logger.warning(f"  ⚠️ Failed to add {svc['name']}: {e}")
+                    # Try to get back to the estimate page and continue
+                    try:
+                        await page.go_back(wait_until="domcontentloaded", timeout=10000)
+                        await page.wait_for_timeout(1500)
+                    except Exception:
+                        pass
                     continue
 
-            # Get the share link
-            logger.info("📋 Saving combined estimate...")
+            # ── 3. We are now on the "My estimate" summary page ──────────────
+            # Make sure we're on the estimate summary, not still on a service page
+            try:
+                my_estimate = page.locator("a:has-text('My estimate'), button:has-text('My estimate')").first
+                if await my_estimate.is_visible(timeout=3000):
+                    await my_estimate.click()
+                    await page.wait_for_timeout(2000)
+            except Exception:
+                pass
+
+            # ── 4. Capture the combined share link ───────────────────────────
+            logger.info("📋 Saving combined estimate to get shareable link...")
             share_link = await capture_share_link(page)
 
             await browser.close()
 
-            if share_link:
-                logger.info(f"✅ Generated combined calculator link with {len(valid_services)} services")
-            else:
-                logger.warning("⚠️ Failed to generate combined calculator link")
+        if share_link:
+            logger.info(f"✅ Combined calculator link generated ({len(services)} services): {share_link[:80]}...")
+        else:
+            logger.warning("⚠️ Could not capture combined calculator link")
 
-            return share_link
+        return share_link
 
     except Exception as e:
-        logger.error(f"❌ Error generating combined calculator link: {e}")
+        logger.error(f"❌ Error generating combined calculator link: {e}", exc_info=True)
         return ""
 
 
-async def add_ec2_service(page, svc):
-    """Add EC2 service to calculator."""
-    # Click "Add Service" if not on service selection page
-    try:
-        add_btn = page.locator("button:has-text('Add service')").first
-        if await add_btn.is_visible(timeout=2000):
-            await add_btn.click()
-            await page.wait_for_timeout(1000)
-    except:
-        pass
-
-    # Select EC2
-    try:
-        ec2_card = page.locator("button:has-text('Amazon EC2')").first
-        await ec2_card.click()
-        await page.wait_for_timeout(2000)
-    except:
-        pass
-
-    # Fill basic info (simplified - just instance type and save)
-    try:
-        # Description
-        desc_input = page.locator("input[aria-label='Description - optional']").first
-        await desc_input.fill(svc['name'])
-
-        # Instance type search
-        search = page.locator("input[aria-label*='Search instance types']").first
-        await search.fill(svc['instance'])
-        await page.wait_for_timeout(1500)
-
-        # Select from table
-        row_radio = page.locator(f"tr:has-text('{svc['instance']}') input[type='radio']").first
-        await row_radio.check()
-        await page.wait_for_timeout(500)
-
-        # Save and add
-        save_btn = page.locator("button:has-text('Save and add service')").first
-        await save_btn.click()
-        await page.wait_for_timeout(2000)
-
-    except Exception as e:
-        logger.debug(f"EC2 add details error: {e}")
-
-
-async def add_rds_service(page, svc):
-    """Add RDS service to calculator."""
-    try:
-        add_btn = page.locator("button:has-text('Add service')").first
-        if await add_btn.is_visible(timeout=2000):
-            await add_btn.click()
-            await page.wait_for_timeout(1000)
-    except:
-        pass
-
-    try:
-        # Select RDS
-        rds_card = page.locator("button:has-text('Amazon RDS')").first
-        await rds_card.click()
-        await page.wait_for_timeout(2000)
-
-        # Description
-        desc_input = page.locator("input[aria-label='Description - optional']").first
-        await desc_input.fill(svc['name'])
-
-        # Save and add
-        save_btn = page.locator("button:has-text('Save and add service')").first
-        await save_btn.click()
-        await page.wait_for_timeout(2000)
-
-    except Exception as e:
-        logger.debug(f"RDS add details error: {e}")
-
-
-async def add_s3_service(page, svc):
-    """Add S3 service to calculator."""
-    try:
-        add_btn = page.locator("button:has-text('Add service')").first
-        if await add_btn.is_visible(timeout=2000):
-            await add_btn.click()
-            await page.wait_for_timeout(1000)
-    except:
-        pass
-
-    try:
-        # Select S3
-        s3_card = page.locator("button:has-text('Amazon S3')").first
-        await s3_card.click()
-        await page.wait_for_timeout(2000)
-
-        # Description
-        desc_input = page.locator("input[aria-label='Description - optional']").first
-        await desc_input.fill(svc['name'])
-
-        # Save and add
-        save_btn = page.locator("button:has-text('Save and add service')").first
-        await save_btn.click()
-        await page.wait_for_timeout(2000)
-
-    except Exception as e:
-        logger.debug(f"S3 add details error: {e}")
-
+# ─────────────────────────────────────────────────────────────────────────────
+# Synchronous wrapper (called from orchestrator.py which may have a running loop)
+# ─────────────────────────────────────────────────────────────────────────────
 
 def generate_combined_calculator_link_sync(results: list[dict]) -> str:
-    """Synchronous wrapper for combined calculator link generation."""
+    """
+    Synchronous entry point.  Runs the async generator in a dedicated thread
+    so it works whether or not an event loop is already running (FastAPI context).
+    """
     import concurrent.futures
 
-    def run_async_in_thread(coro):
-        def _run():
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            try:
-                return new_loop.run_until_complete(coro)
-            finally:
-                new_loop.close()
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(_run)
-            return future.result(timeout=300)  # 5 minute timeout
+    def _run_in_thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(generate_combined_calculator_link(results))
+        finally:
+            loop.close()
 
     try:
-        coro = generate_combined_calculator_link(results)
-
-        # Check if event loop is running
-        try:
-            loop = asyncio.get_running_loop()
-            return run_async_in_thread(coro)
-        except RuntimeError:
-            return asyncio.run(coro)
+        # Always run in a fresh thread to avoid event-loop conflicts
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(_run_in_thread)
+            return future.result(timeout=600)   # 10-minute hard timeout
+    except concurrent.futures.TimeoutError:
+        logger.error("Combined calculator link generation timed out (600 s)")
+        return ""
     except Exception as e:
-        logger.error(f"Error generating combined calculator link: {e}")
+        logger.error(f"Combined calculator sync wrapper error: {e}")
         return ""

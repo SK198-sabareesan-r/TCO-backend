@@ -540,14 +540,10 @@ def process_migration_job(job_id: str):
         job["progress"] = 15
         logger.info(f"🚀 [PIPELINE] Starting migration pipeline...")
 
-        # TEST MODE: Process only first 5 services
-        TEST_MODE = True
-        limit = 5 if TEST_MODE else None
-
-        if TEST_MODE:
-            logger.info(f"⚠️ TEST MODE ENABLED: Processing only {limit} services")
-            job["message"] = f"⚠️ TEST MODE: Processing first {limit} services only"
-            job["progress"] = 18
+        # PRODUCTION MODE: Process all services
+        # To limit for local debugging, set TEST_MODE = True and limit = 5
+        TEST_MODE = False
+        limit = None  # process every row in the uploaded file
 
         # Run pipeline with progress callback
         job["message"] = "🔄 Loading services from Excel..."
