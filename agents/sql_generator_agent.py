@@ -803,7 +803,19 @@ Generate a PostgreSQL query that:
         logger.info(f"🔍 Generated SQL with {len(params)} parameters")
         logger.debug(f"SQL: {sql}")
         logger.debug(f"Params: {params}")
-        
+
+        # CRITICAL FIX: Add NA filter to prevent CAST errors
+        # Insert the filter right after the WHERE clause if it's missing
+        if '"vcpu"' in sql and '"vcpu" != \'NA\'' not in sql:
+            # Find WHERE clause and add NA filters
+            if 'WHERE' in sql:
+                # Add NA filters after WHERE clause
+                sql = sql.replace(
+                    'WHERE "instancetype"',
+                    'WHERE "vcpu" != \'NA\' AND "vcpu" IS NOT NULL AND "memory" != \'NA\' AND "memory" IS NOT NULL AND "instancetype"'
+                )
+                logger.debug("✅ Added NA filters to SQL")
+
         try:
             # Execute query
             rows = execute_query(sql, tuple(params))
