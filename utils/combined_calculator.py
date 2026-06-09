@@ -353,12 +353,19 @@ async def generate_combined_calculator_link(
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
-                headless=headless,
+                headless=True,
                 args=[
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-blink-features=AutomationControlled",
                     "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--single-process",
+                    "--no-zygote",
+                    "--disable-extensions",
+                    "--disable-background-networking",
+                    "--disable-default-apps",
+                    "--disable-sync",
                 ],
             )
             context = await browser.new_context(
@@ -372,10 +379,11 @@ async def generate_combined_calculator_link(
             page = await context.new_page()
 
             # ── 1. Open calculator home ──────────────────────────────────────
-            logger.debug("Opening AWS Calculator home...")
+            logger.info("🌐 Opening AWS Calculator home page...")
             await page.goto(CALCULATOR_HOME, wait_until="networkidle", timeout=45000)
             await page.wait_for_timeout(3000)
             await accept_cookies(page)
+            logger.info("✅ Calculator home loaded")
 
             # Click "Create estimate" on the landing page if present
             for sel in [
@@ -388,6 +396,7 @@ async def generate_combined_calculator_link(
                     if await btn.is_visible(timeout=2000):
                         await btn.click()
                         await page.wait_for_timeout(2000)
+                        logger.info(f"✅ Clicked '{sel}'")
                         break
                 except Exception:
                     pass
@@ -396,7 +405,7 @@ async def generate_combined_calculator_link(
             for idx, svc in enumerate(services):
                 is_last = idx == len(services) - 1
                 svc_type = svc["type"]
-                logger.info(f"  [{idx+1}/{len(services)}] Adding: {svc['name']} ({svc_type})")
+                logger.info(f"  [{idx+1}/{len(services)}] Adding: {svc['name']} ({svc_type}: {svc.get('instance','')})")
 
                 try:
                     if svc_type in ("ec2", "vm"):
