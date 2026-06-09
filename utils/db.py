@@ -39,9 +39,30 @@ def execute_query(sql: str, params: tuple = ()) -> list[dict]:
     """
     Execute a SELECT query and return rows as list of dicts.
     Automatically returns connection to pool after use.
+
+    Applies a universal NA-safety rewrite before execution:
+    Any CAST("vcpu" AS INTEGER) or CAST(REPLACE("memory",...) AS FLOAT) in the
+    SQL will silently fail on rows where the column contains 'NA' or NULL.
+    We inject a WHERE filter that strips those rows out before any CAST happens,
+    regardless of where in the WHERE clause the CAST appears.
     """
     conn = None
     try:
+        # ── Universal NA-safety rewrite ────────────────────────────────────────
+        # Inject vcpu/memory NA guards if the SQL casts those columns and the
+        # guards are not already present.  Works regardless of exact WHERE structure.
+        if 'CAST("vcpu"' in sql and '"vcpu" != \'NA\'' not in sql:
+            if 'WHERE' in sql.upper():
+                # Insert right after the first WHERE keyword
+                sql = sql.replace('WHERE ', 'WHERE "vcpu" IS NOT NULL AND "vcpu" != \'NA\' AND ', 1)
+            logger.debug("✅ [db] Injected vcpu NA guard")
+
+        if 'CAST(REPLACE("memory"' in sql and '"memory" != \'NA\'' not in sql:
+            if 'WHERE' in sql.upper():
+                sql = sql.replace('WHERE ', 'WHERE "memory" IS NOT NULL AND "memory" != \'NA\' AND ', 1)
+            logger.debug("✅ [db] Injected memory NA guard")
+        # ──────────────────────────────────────────────────────────────────────
+
         conn = get_pool().getconn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, params)

@@ -804,22 +804,6 @@ Generate a PostgreSQL query that:
         logger.debug(f"SQL: {sql}")
         logger.debug(f"Params: {params}")
 
-        # CRITICAL FIX: Add NA filter to prevent CAST errors
-        if '"vcpu"' in sql and 'vcpu" != \'NA\'' not in sql:
-            # Add NA filters right after the WHERE clause
-            if 'WHERE "instancetype" IS NOT NULL' in sql:
-                sql = sql.replace(
-                    'WHERE "instancetype" IS NOT NULL',
-                    'WHERE "vcpu" != \'NA\' AND "vcpu" IS NOT NULL AND "memory" != \'NA\' AND "memory" IS NOT NULL AND "instancetype" IS NOT NULL'
-                )
-                logger.debug("✅ Added NA filters to SQL")
-            elif 'WHERE "instancetype"' in sql:
-                sql = sql.replace(
-                    'WHERE "instancetype"',
-                    'WHERE "vcpu" != \'NA\' AND "vcpu" IS NOT NULL AND "memory" != \'NA\' AND "memory" IS NOT NULL AND "instancetype"'
-                )
-                logger.debug("✅ Added NA filters to SQL")
-
         try:
             # Execute query
             rows = execute_query(sql, tuple(params))
