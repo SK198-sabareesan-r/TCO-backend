@@ -237,7 +237,7 @@ def process_all_services(services: list[dict], output_path: str = None, limit: i
         # Calculate progress: 30% to 95% range (25% already used for loading)
         base_progress = 30 + int((idx / total) * 65)
 
-        service_name = service_row.get('Service Name', 'Unknown')
+        service_name = service_row.get('service_name') or service_row.get('Service Name') or service_row.get('instance_type') or f"Service-{idx}"
 
         # Phase 1: Start processing
         logger.info(f"🔄 ─── [{idx}/{total}] ({round((idx/total)*100,1)}%) Processing service ───")

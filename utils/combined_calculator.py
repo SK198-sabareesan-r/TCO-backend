@@ -223,7 +223,9 @@ async def _add_ec2(page: Page, svc: dict, is_last: bool):
 
 async def _add_rds(page: Page, svc: dict, is_last: bool):
     """Add an RDS service to the open estimate."""
-    engine = svc.get("database_engine", "MySQL")
+    engine = svc.get("database_engine") or "MySQL"
+    instance = svc["instance"]
+    region = normalize_region(svc["region"])
 
     # Map engine to calculator service name
     engine_map = {
@@ -239,12 +241,11 @@ async def _add_rds(page: Page, svc: dict, is_last: bool):
 
     await _click_add_service(page)
     if not await _select_service_card(page, service_name):
-        # Fallback: search just "RDS"
+        # Fallback: generic RDS search
         await _click_add_service(page)
-        await _select_service_card(page, "Amazon RDS")
-
-    region   = normalize_region(svc["region"])
-    instance = svc["instance"]
+        if not await _select_service_card(page, "Amazon RDS"):
+            logger.warning(f"  ⚠️ Could not select RDS card for {svc['name']}")
+            return
 
     try:
         await fill_input(page, "input[aria-label='Description - optional']", svc["name"])
@@ -253,23 +254,60 @@ async def _add_rds(page: Page, svc: dict, is_last: bool):
 
     # Region
     await select_dropdown_verified(page, "Choose a Region", region)
-    await page.wait_for_timeout(800)
+    await page.wait_for_timeout(1000)
 
-    # Instance class search
+    # Instance class — RDS uses a DROPDOWN (button), not a text input
+    # Try the dropdown approach first
+    instance_set = False
     try:
-        inputs = await page.locator("input[type='text'], input[type='search']").all()
-        for inp in inputs:
-            aria = await inp.get_attribute("aria-label") or ""
-            ph   = await inp.get_attribute("placeholder") or ""
-            if "instance" in aria.lower() or "class" in aria.lower() or "instance" in ph.lower():
-                await inp.scroll_into_view_if_needed()
-                await inp.click()
-                await inp.fill(instance)
-                await page.wait_for_timeout(1500)
+        # Look for instance class dropdown button and select via dropdown
+        await select_dropdown_verified(page, "DB instance class", instance)
+        instance_set = True
+        logger.debug(f"RDS instance set via dropdown: {instance}")
+    except Exception:
+        pass
+
+    # Fallback: try text input search (older calculator versions)
+    if not instance_set:
+        try:
+            inputs = await page.locator("input[type='text'], input[type='search']").all()
+            for inp in inputs:
+                aria = await inp.get_attribute("aria-label") or ""
+                ph   = await inp.get_attribute("placeholder") or ""
+                if "instance" in aria.lower() or "class" in aria.lower() or "instance" in ph.lower():
+                    await inp.scroll_into_view_if_needed()
+                    await inp.click()
+                    await inp.fill(instance)
+                    await page.wait_for_timeout(1500)
+                    await pick_option_safe(page, instance)
+                    instance_set = True
+                    break
+        except Exception as e:
+            logger.debug(f"RDS instance text input error: {e}")
+
+    # Last resort: JS to fill any instance-related input
+    if not instance_set:
+        try:
+            set_result = await page.evaluate("""
+                (instanceType) => {
+                    const inputs = [...document.querySelectorAll('input, select')];
+                    for (const inp of inputs) {
+                        const label = inp.getAttribute('aria-label') || inp.getAttribute('placeholder') || '';
+                        if (label.toLowerCase().includes('instance') || label.toLowerCase().includes('class')) {
+                            inp.value = instanceType;
+                            inp.dispatchEvent(new Event('input', { bubbles: true }));
+                            inp.dispatchEvent(new Event('change', { bubbles: true }));
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            """, instance)
+            if set_result:
+                await page.wait_for_timeout(1000)
                 await pick_option_safe(page, instance)
-                break
-    except Exception as e:
-        logger.debug(f"RDS instance class error: {e}")
+        except Exception as e:
+            logger.debug(f"RDS JS instance fallback error: {e}")
 
     await _save_and_add(page)
     logger.info(f"  ✅ RDS added: {instance} ({engine}, {region})")

@@ -46,67 +46,108 @@ REQUIRED_COLUMNS = ["service_type", "current_provider"]
 
 COLUMN_ALIASES = {
     # service identification
-    "service":         "service_type",
-    "service type":    "service_type",
-    # Note: "type" is NOT mapped to avoid conflicts with Azure SQL "Type" column (vcore/dtu)
-    "cloud":           "current_provider",
-    "provider":        "current_provider",
-    "current cloud":   "current_provider",
-    "current_provider":"current_provider",
-    # compute
-    "vcpu":            "vcpus",
-    "vcpus":           "vcpus",
-    "cpu":             "vcpus",
-    "cpu_cores":       "vcpus",
-    "cores":           "vcpus",
-    "memory":          "memory_gib",
-    "memory (gib)":    "memory_gib",
-    "memory_gb":       "memory_gib",
-    "ram":             "memory_gib",
-    "ram (gib)":       "memory_gib",
-    "instance":        "instance_type",
-    "instance type":   "instance_type",
-    "instance_type":   "instance_type",
-    # Azure-specific mappings
-    "size":            "instance_type",      # Azure VM Size
-    "name":            "service_name",       # Azure resource Name
-    "location":        "region",             # Azure Location
-    "sku":             "instance_type",      # Azure SKU (for SQL/Storage/etc)
-    "capacity":        "vcpus",              # Azure SQL vCore capacity
-    "datamaxsizegb":   "storage_gb",         # Azure SQL storage
-    "storagesizegb":   "storage_gb",         # Azure PostgreSQL storage
-    "osname":          "operating_system",   # Azure OS Name
-    "tier":            "tier",               # Azure tier (for storage/SQL)
-    # region / tenancy
-    "region":          "region",
-    "region_preference": "region",
-    "tenancy":         "tenancy",
-    # OS
-    "os":              "operating_system",
-    "operating system":"operating_system",
-    "operating_system":"operating_system",
-    # cost columns
+    "service":              "service_type",
+    "service type":         "service_type",
+    "service_type":         "service_type",
+    # provider
+    "cloud":                "current_provider",
+    "provider":             "current_provider",
+    "current cloud":        "current_provider",
+    "current_provider":     "current_provider",
+    # ── compute ──────────────────────────────────────────────────────────────
+    "vcpu":                 "vcpus",
+    "vcpus":                "vcpus",
+    "cpu":                  "vcpus",
+    "cpu_cores":            "vcpus",
+    "cores":                "vcpus",
+    "number of vcpus":      "vcpus",       # GCP Cloud Console
+    "virtual cpus":         "vcpus",
+    "memory":               "memory_gib",
+    "memory (gib)":         "memory_gib",
+    "memory_gb":            "memory_gib",
+    "memory (gb)":          "memory_gib",  # GCP Cloud Console
+    "ram":                  "memory_gib",
+    "ram (gib)":            "memory_gib",
+    "instance":             "instance_type",
+    "instance type":        "instance_type",
+    "instance_type":        "instance_type",
+    "machine type":         "instance_type",   # GCP Compute Engine export
+    "machine_type":         "instance_type",   # GCP programmatic
+    "machine series":       "instance_type",   # GCP
+    "vm size":              "instance_type",
+    "vm_size":              "instance_type",
+    # ── Azure-specific ───────────────────────────────────────────────────────
+    "size":                 "instance_type",    # Azure VM Size
+    "name":                 "service_name",     # Azure resource Name
+    "location":             "region",           # Azure Location
+    "sku":                  "instance_type",    # Azure SKU
+    "capacity":             "vcpus",            # Azure SQL vCore capacity
+    "datamaxsizegb":        "storage_gb",       # Azure SQL storage
+    "storagesizegb":        "storage_gb",       # Azure PostgreSQL storage
+    "osname":               "operating_system", # Azure OS Name
+    "tier":                 "tier",             # Azure tier
+    # ── GCP-specific ─────────────────────────────────────────────────────────
+    "machine_series":       "instance_type",    # GCP n2, e2, c3 series
+    "provisioning_model":   "tenancy",          # GCP standard/preemptible
+    "database_version":     "database_engine",  # GCP Cloud SQL version
+    "database version":     "database_engine",
+    "db_version":           "database_engine",
+    "database_type":        "database_engine",
+    "database type":        "database_engine",
+    "engine":               "database_engine",
+    "zone":                 "region",           # GCP zone → region
+    "availability_zone":    "region",
+    # ── region / tenancy ─────────────────────────────────────────────────────
+    "region":               "region",
+    "region_preference":    "region",
+    "tenancy":              "tenancy",
+    # ── OS ───────────────────────────────────────────────────────────────────
+    "os":                   "operating_system",
+    "operating system":     "operating_system",
+    "operating_system":     "operating_system",
+    "platform":             "operating_system",  # GCP
+    "image":                "operating_system",  # GCP boot image
+    # ── cost columns ─────────────────────────────────────────────────────────
     "current monthly cost": "current_monthly_cost_usd",
     "current_monthly_cost": "current_monthly_cost_usd",
     "monthly cost":         "current_monthly_cost_usd",
     "cost (usd)":           "current_monthly_cost_usd",
     "cost":                 "current_monthly_cost_usd",
-    # storage
-    "storage (gb)":    "storage_gb",
-    "storage":         "storage_gb",
-    "storage_gb":      "storage_gb",
-    # quantity
-    "count":           "number_of_instances",
-    "quantity":        "number_of_instances",
-    "instances":       "number_of_instances",
-    "number of instances": "number_of_instances",
-    # misc
-    "workload":        "workload",
-    "notes":           "notes",
-    "service_name":    "service_name",
-    "server_name":     "service_name",
-    "application":     "application",
-    "environment":     "environment",
+    "total price":          "current_monthly_cost_usd",   # GCP TCO tool
+    "total_price":          "current_monthly_cost_usd",   # GCP TCO tool
+    "total cost":           "current_monthly_cost_usd",
+    "monthly_cost":         "current_monthly_cost_usd",
+    "price":                "current_monthly_cost_usd",
+    "amount":               "current_monthly_cost_usd",
+    # ── storage ──────────────────────────────────────────────────────────────
+    "storage (gb)":         "storage_gb",
+    "storage":              "storage_gb",
+    "storage_gb":           "storage_gb",
+    "disk_size":            "storage_gb",
+    "disk size":            "storage_gb",
+    "disk size (gb)":       "storage_gb",
+    "data disk size":       "storage_gb",
+    "volume size":          "storage_gb",
+    "capacity (gb)":        "storage_gb",
+    # ── quantity ─────────────────────────────────────────────────────────────
+    "count":                "number_of_instances",
+    "quantity":             "number_of_instances",
+    "instances":            "number_of_instances",
+    "number of instances":  "number_of_instances",
+    "number_of_instances":  "number_of_instances",
+    "instance count":       "number_of_instances",
+    "vm count":             "number_of_instances",
+    # ── misc ─────────────────────────────────────────────────────────────────
+    "workload":             "workload",
+    "notes":                "notes",
+    "service_name":         "service_name",
+    "server_name":          "service_name",
+    "server name":          "service_name",
+    "resource name":        "service_name",   # GCP/Azure resource name
+    "resource_name":        "service_name",
+    "application":          "application",
+    "environment":          "environment",
+    "description":          "service_name",   # GCP service description
 }
 
 # Sheet name to service type mapping for multi-sheet Excel files
