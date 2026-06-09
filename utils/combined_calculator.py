@@ -459,11 +459,21 @@ def generate_combined_calculator_link_sync(results: list[dict]) -> str:
     """
     import concurrent.futures
 
+    # ── Pre-flight: verify Playwright + Chromium are available ───────────────
+    try:
+        from playwright.sync_api import sync_playwright as _swp  # noqa: F401
+    except ImportError:
+        logger.error("❌ Playwright is not installed. Run: pip install playwright && playwright install chromium")
+        return ""
+
     def _run_in_thread():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             return loop.run_until_complete(generate_combined_calculator_link(results))
+        except Exception as exc:
+            logger.error(f"❌ combined_calculator async error: {exc}", exc_info=True)
+            return ""
         finally:
             loop.close()
 
@@ -473,8 +483,8 @@ def generate_combined_calculator_link_sync(results: list[dict]) -> str:
             future = ex.submit(_run_in_thread)
             return future.result(timeout=600)   # 10-minute hard timeout
     except concurrent.futures.TimeoutError:
-        logger.error("Combined calculator link generation timed out (600 s)")
+        logger.error("❌ Combined calculator link generation timed out (600 s)")
         return ""
     except Exception as e:
-        logger.error(f"Combined calculator sync wrapper error: {e}")
+        logger.error(f"❌ Combined calculator sync wrapper error: {e}", exc_info=True)
         return ""

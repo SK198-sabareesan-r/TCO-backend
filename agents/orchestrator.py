@@ -383,7 +383,7 @@ def run_migration_pipeline(input_xlsx: str, output_xlsx: Optional[str] = None, s
             for result in results:
                 result["combined_calculator_link"] = ""
     except Exception as e:
-        logger.error(f"❌ Error generating combined calculator link: {e}")
+        logger.error(f"❌ Error generating combined calculator link: {e}", exc_info=True)
         for result in results:
             result["combined_calculator_link"] = ""
 
