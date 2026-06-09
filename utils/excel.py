@@ -407,7 +407,7 @@ def _write_summary_sheet(wb: Workbook, results: list[dict]):
         "Recommended AWS Instance", "AWS Region",
         "AWS OnDemand Hourly", "AWS OnDemand Monthly", "AWS OnDemand Annual",
         "Optimised Plan", "Optimised Monthly", "Optimised Annual",
-        "Individual AWS Calculator Link",
+        "Notes",
     ]
     _header_row(ws, title_cols, row=2)
     ws.row_dimensions[2].height = 36
@@ -440,7 +440,7 @@ def _write_summary_sheet(wb: Workbook, results: list[dict]):
             opt_plan,
             opt_monthly,
             opt_annual,
-            calc_link,
+            result.get("notes", ""),   # notes instead of individual link
         ]
 
         money_cols = {7, 8, 9, 11, 12}
@@ -448,12 +448,6 @@ def _write_summary_sheet(wb: Workbook, results: list[dict]):
         for c_idx, val in enumerate(row_data, 1):
             fmt  = MONEY_FORMAT if c_idx in money_cols else None
             cell = _data_cell(ws, r_idx, c_idx, val, fmt=fmt)
-            if c_idx == 13 and val:   # Individual link — make it a short display text
-                cell.value     = "Open in AWS Calculator →"
-                cell.hyperlink = val
-                cell.style     = "Hyperlink"
-                cell.font      = Font(name="Calibri", size=10, color="0563C1", underline="single")
-                cell.alignment = Alignment(horizontal="center")
 
     # Column widths
     widths = [22, 10, 10, 28, 22, 22, 18, 20, 20, 22, 20, 20, 30]

@@ -124,67 +124,10 @@ def process_single_service(service_row: dict) -> dict:
             "notes":        cost_result.get("notes", result["notes"]),
         })
 
-        # ── Step 3: Generate AWS Calculator Link ──────────────────────────────
-        calculator_link = ""
-        if best_match.get("instance_type"):
-            try:
-                from utils.aws_calculator import generate_calculator_link_sync
-                
-                service_type = service_row.get("service_type", "ec2")
-                instance_type = best_match.get("instance_type")
-                region = best_match.get("location") or best_match.get("regioncode") or service_row.get("region", "US East (N. Virginia)")
-                
-                # Prepare parameters based on service type
-                # Use AWS best_match OS (already in AWS format), fallback to normalized input OS
-                aws_os = best_match.get("operatingsystem")
-                if not aws_os:
-                    # If AWS data doesn't have OS, normalize the input OS to AWS format
-                    from utils.aws_calculator import normalize_os
-                    input_os = service_row.get("operating_system", "Linux")
-                    aws_os = normalize_os(input_os)
-                    logger.debug(f"OS not in best_match, normalized '{input_os}' -> '{aws_os}'")
-                else:
-                    logger.debug(f"Using AWS OS from best_match: '{aws_os}'")
-                
-                calc_params = {
-                    "operating_system": aws_os,
-                    "tenancy": best_match.get("tenancy") or service_row.get("tenancy", "Shared"),
-                    "num_instances": 1,
-                    "pricing_model": "on-demand",
-                    "usage_pct": 100,
-                }
-                
-                # Add service-specific parameters
-                if service_type.lower() == "rds":
-                    calc_params["database_engine"] = best_match.get("databaseengine") or service_row.get("database_engine", "MySQL")
-                    calc_params["deployment"] = "Single-AZ"
-                    calc_params["storage_type"] = "General Purpose SSD (gp2)"
-                    calc_params["storage_gb"] = int(service_row.get("storage_gb", 100))
-                elif service_type.lower() == "ec2":
-                    storage = service_row.get("storage_gb")
-                    if storage:
-                        calc_params["storage_gb"] = int(storage)
-                
-                logger.info(f"🔗 Generating calculator link for {instance_type}...")
-                calculator_link = generate_calculator_link_sync(
-                    service_type=service_type,
-                    instance_type=instance_type,
-                    region=region,
-                    **calc_params
-                )
-                
-                if calculator_link:
-                    result["calculator_link"] = calculator_link
-                    logger.info(f"  ✅ Calculator link generated")
-                else:
-                    logger.warning(f"  ⚠️ Calculator link generation failed")
-                    result["calculator_link"] = ""
-                    
-            except Exception as e:
-                logger.warning(f"Calculator link generation error: {e}")
-                result["calculator_link"] = ""
-        else:
-            result["calculator_link"] = ""
+        # ── Step 3: Individual calculator links REMOVED ───────────────────────
+        # Only the combined link (all services in one estimate) is generated.
+        # Individual links took ~70s per service — skipping saves ~7 minutes.
+        result["calculator_link"] = ""
 
         # Log quick summary
         opt = result.get("optimised", {})
