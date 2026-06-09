@@ -3,14 +3,12 @@ utils/combined_calculator.py
 -----------------------------
 Generate ONE AWS Calculator link that contains ALL services.
 
-Strategy (based on the proven individual calculator approach):
-- For EC2: go to /createCalculator/ec2-enhancement, fill all fields,
-  click "Save and add service" (stays in multi-service flow)
-- For RDS: go to /createCalculator/RDS{Engine}, fill all fields,
-  click "Save and add service"
-- For S3: go to /createCalculator/S3, fill fields, "Save and add service"
-- After all services: from the "My estimate" summary page, click Share
-  to get ONE combined estimate URL with all services.
+Key insight: All services must be added on the SAME page (same tab).
+Opening new tabs creates separate estimates. The flow is:
+  1. Navigate base page to first service URL → fill → "Save and add service"
+  2. From summary, navigate to next service URL → fill → "Save and add service"
+  3. Repeat for all services on the SAME page
+  4. Share → get one combined estimate URL
 """
 
 import asyncio
@@ -40,8 +38,7 @@ RDS_URLS = {
     "SQL Server": "https://calculator.aws/#/createCalculator/RDSSQLServer",
     "Oracle":     "https://calculator.aws/#/createCalculator/RDSOracle",
 }
-S3_URL     = "https://calculator.aws/#/createCalculator/S3"
-LAMBDA_URL = "https://calculator.aws/#/createCalculator/Lambda"
+S3_URL = "https://calculator.aws/#/createCalculator/S3"
 
 BROWSER_ARGS = [
     "--no-sandbox",
@@ -60,14 +57,11 @@ USER_AGENT = (
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Save-and-add helper  (stays in multi-service flow)
+# Save-and-add helper
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _save_and_add_service(page: Page) -> bool:
-    """
-    Click 'Save and add service' to stay in the multi-service estimate flow.
-    Falls back to 'Save and view summary' if needed.
-    """
+    """Click 'Save and add service' — stays in the multi-service estimate flow."""
     for sel in [
         "button[aria-label='Save and add service']",
         "button:has-text('Save and add service')",
@@ -79,13 +73,12 @@ async def _save_and_add_service(page: Page) -> bool:
             if await btn.is_visible(timeout=3000):
                 await btn.scroll_into_view_if_needed()
                 await btn.click()
-                await page.wait_for_timeout(3000)
+                await page.wait_for_timeout(4000)
                 logger.debug(f"✅ Clicked: {sel}")
                 return True
         except Exception:
             continue
 
-    # JS fallback
     clicked = await page.evaluate("""
         () => {
             for (const text of ['Save and add service', 'Save and view summary']) {
@@ -97,211 +90,194 @@ async def _save_and_add_service(page: Page) -> bool:
         }
     """)
     if clicked:
-        await page.wait_for_timeout(3000)
-        logger.debug(f"✅ JS clicked: {clicked}")
+        await page.wait_for_timeout(4000)
         return True
 
     return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# EC2  (exact copy of proven individual logic, but clicks "Save and add")
+# EC2 — on the SAME page
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _add_ec2(page: Page, context, svc: dict):
-    """Add an EC2 service — uses the proven individual EC2 calculator approach."""
-    instance = svc["instance"]
-    region   = normalize_region(svc["region"])
-    os_name  = normalize_os(svc.get("os", "Linux"))
-    tenancy  = svc.get("tenancy", "Shared")
+async def _add_ec2(page: Page, svc: dict) -> bool:
+    """Navigate the current page to EC2 calculator, fill, save and add."""
+    instance    = svc["instance"]
+    region      = normalize_region(svc["region"])
+    os_name     = normalize_os(svc.get("os", "Linux"))
+    tenancy     = svc.get("tenancy", "Shared")
     tenancy_val = tenancy if "Instances" in tenancy or "Host" in tenancy else f"{tenancy} Instances"
-    num      = str(svc.get("num_instances", 1))
+    num         = str(svc.get("num_instances", 1))
 
-    logger.info(f"    → Loading EC2 calculator page for {instance}...")
-    page2 = await context.new_page()
+    logger.info(f"    → Navigating to EC2 calculator for {instance}...")
+    await page.goto(EC2_URL, wait_until="networkidle", timeout=45000)
+    await page.wait_for_timeout(4000)
+    await accept_cookies(page)
+
+    # Description
+    await fill_input(page, "input[aria-label='Description - optional']", svc["name"])
+
+    # Region
+    await select_dropdown_verified(page, "Choose a Region", region)
+    await page.wait_for_timeout(1200)
+
+    # Tenancy
     try:
-        await page2.goto(EC2_URL, wait_until="networkidle", timeout=45000)
-        await page2.wait_for_timeout(4000)
-        await accept_cookies(page2)
+        await select_dropdown_verified(page, "Tenancy", tenancy_val)
+    except Exception:
+        pass
 
-        # Description
-        await fill_input(page2, "input[aria-label='Description - optional']", svc["name"])
+    # OS
+    await select_dropdown_verified(page, "Operating system", os_name)
 
-        # Region
-        await select_dropdown_verified(page2, "Choose a Region", region)
-        await page2.wait_for_timeout(1200)
+    # Workload — consistent
+    try:
+        radio = page.locator("input[type='radio'][value='consistent']")
+        await radio.scroll_into_view_if_needed()
+        await radio.check()
+    except Exception:
+        pass
 
-        # Tenancy
-        try:
-            await select_dropdown_verified(page2, "Tenancy", tenancy_val)
-        except Exception:
-            pass
+    # Number of instances
+    await fill_input(page, "input[aria-label*='Number of instances']", num)
 
-        # OS
-        await select_dropdown_verified(page2, "Operating system", os_name)
+    # Instance type search + table select
+    try:
+        search = page.locator("input[aria-label*='Search instance types']")
+        await search.scroll_into_view_if_needed()
+        await search.click(force=True)
+        await search.fill(instance)
+        await page.wait_for_timeout(2500)
+        row_radio = page.locator(f"tr:has-text('{instance}') input[type='radio']").first
+        if await row_radio.count() > 0:
+            await row_radio.scroll_into_view_if_needed()
+            await row_radio.check()
+            await page.wait_for_timeout(600)
+    except Exception as e:
+        logger.debug(f"EC2 instance select error: {e}")
 
-        # Workload — consistent
-        try:
-            radio = page2.locator("input[type='radio'][value='consistent']")
-            await radio.scroll_into_view_if_needed()
-            await radio.check()
-        except Exception:
-            pass
-
-        # Number of instances
-        await fill_input(page2, "input[aria-label*='Number of instances']", num)
-
-        # Instance type search + table select
-        try:
-            search = page2.locator("input[aria-label*='Search instance types']")
-            await search.scroll_into_view_if_needed()
-            await search.click(force=True)
-            await search.fill(instance)
-            await page2.wait_for_timeout(2500)
-            row_radio = page2.locator(f"tr:has-text('{instance}') input[type='radio']").first
-            if await row_radio.count() > 0:
-                await row_radio.scroll_into_view_if_needed()
-                await row_radio.check()
-                await page2.wait_for_timeout(600)
-        except Exception as e:
-            logger.debug(f"EC2 instance select error: {e}")
-
-        # Save and add service
-        saved = await _save_and_add_service(page2)
-        if saved:
-            logger.info(f"  ✅ EC2 added: {instance} ({region})")
-        else:
-            logger.warning(f"  ⚠️ EC2 save failed for {instance}")
-
-    finally:
-        await page2.close()
+    saved = await _save_and_add_service(page)
+    if saved:
+        logger.info(f"  ✅ EC2 added: {instance} ({region})")
+    else:
+        logger.warning(f"  ⚠️ EC2 save failed for {instance}")
+    return saved
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# RDS  (exact copy of proven individual logic, but clicks "Save and add")
+# RDS — on the SAME page
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _add_rds(page: Page, context, svc: dict):
-    """Add an RDS service — uses the proven individual RDS calculator approach."""
+async def _add_rds(page: Page, svc: dict) -> bool:
+    """Navigate the current page to RDS calculator, fill, save and add."""
     engine   = svc.get("database_engine") or "MySQL"
     instance = svc["instance"]
     region   = normalize_region(svc["region"])
     url      = RDS_URLS.get(engine, RDS_URLS["MySQL"])
 
-    logger.info(f"    → Loading RDS calculator page for {instance} ({engine})...")
-    page2 = await context.new_page()
+    logger.info(f"    → Navigating to RDS calculator for {instance} ({engine})...")
+    await page.goto(url, wait_until="networkidle", timeout=45000)
+    await page.wait_for_timeout(5000)
+    await accept_cookies(page)
+
+    # Description
+    await fill_input(page, "input[aria-label='Description - optional']", svc["name"])
+
+    # Region — try label scan first (same as working individual code)
+    region_selected = False
     try:
-        await page2.goto(url, wait_until="networkidle", timeout=45000)
-        await page2.wait_for_timeout(5000)
-        await accept_cookies(page2)
+        labels = await page.locator("label").all()
+        for label in labels:
+            text = await label.inner_text()
+            if "region" in text.lower():
+                await open_cloudscape_dropdown(page, text.strip())
+                await pick_option_safe(page, region)
+                region_selected = True
+                break
+    except Exception:
+        pass
 
-        # Description
-        await fill_input(page2, "input[aria-label='Description - optional']", svc["name"])
-
-        # Region — same approach as proven individual code
-        region_selected = False
+    if not region_selected:
         try:
-            labels = await page2.locator("label").all()
-            for label in labels:
-                text = await label.inner_text()
-                if "region" in text.lower():
-                    await open_cloudscape_dropdown(page2, text.strip())
-                    await pick_option_safe(page2, region)
-                    region_selected = True
+            buttons = await page.locator("button").all()
+            for btn in buttons:
+                aria = await btn.get_attribute("aria-label") or ""
+                if "region" in aria.lower():
+                    await btn.click()
+                    await page.wait_for_timeout(800)
+                    await pick_option_safe(page, region)
                     break
         except Exception:
             pass
 
-        if not region_selected:
-            try:
-                buttons = await page2.locator("button").all()
-                for btn in buttons:
-                    aria = await btn.get_attribute("aria-label") or ""
-                    if "region" in aria.lower():
-                        await btn.click()
-                        await page2.wait_for_timeout(800)
-                        await pick_option_safe(page2, region)
-                        break
-            except Exception:
-                pass
+    await page.wait_for_timeout(1200)
 
-        await page2.wait_for_timeout(1200)
+    # Deployment — Single-AZ
+    try:
+        radio = page.locator("input[type='radio'][value*='Single']").first
+        if await radio.count() > 0:
+            await radio.scroll_into_view_if_needed()
+            await radio.click()
+            await page.wait_for_timeout(600)
+    except Exception:
+        pass
 
-        # Deployment — Single-AZ radio
-        try:
-            radio = page2.locator("input[type='radio'][value*='Single']").first
-            if await radio.count() > 0:
-                await radio.scroll_into_view_if_needed()
-                await radio.click()
-                await page2.wait_for_timeout(600)
-        except Exception:
-            pass
+    # Instance class — text input with "instance" or "class" in label
+    try:
+        inputs = await page.locator("input[type='text']").all()
+        for inp in inputs:
+            aria = await inp.get_attribute("aria-label") or ""
+            ph   = await inp.get_attribute("placeholder") or ""
+            if "instance" in aria.lower() or "class" in aria.lower():
+                await inp.scroll_into_view_if_needed()
+                await inp.click()
+                await inp.fill(instance)
+                await page.wait_for_timeout(1500)
+                await pick_option_safe(page, instance)
+                break
+    except Exception as e:
+        logger.debug(f"RDS instance input error: {e}")
 
-        # Instance class — same as proven individual: find text input with "instance" in label
-        try:
-            inputs = await page2.locator("input[type='text']").all()
-            for inp in inputs:
-                aria = await inp.get_attribute("aria-label") or ""
-                ph   = await inp.get_attribute("placeholder") or ""
-                if "instance" in aria.lower() or "class" in aria.lower():
-                    await inp.scroll_into_view_if_needed()
-                    await inp.click()
-                    await inp.fill(instance)
-                    await page2.wait_for_timeout(1500)
-                    await pick_option_safe(page2, instance)
-                    break
-        except Exception as e:
-            logger.debug(f"RDS instance input error: {e}")
-
-        # Save and add service
-        saved = await _save_and_add_service(page2)
-        if saved:
-            logger.info(f"  ✅ RDS added: {instance} ({engine}, {region})")
-        else:
-            logger.warning(f"  ⚠️ RDS save failed for {instance}")
-
-    finally:
-        await page2.close()
+    saved = await _save_and_add_service(page)
+    if saved:
+        logger.info(f"  ✅ RDS added: {instance} ({engine}, {region})")
+    else:
+        logger.warning(f"  ⚠️ RDS save failed for {instance}")
+    return saved
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# S3
+# S3 — on the SAME page
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _add_s3(page: Page, context, svc: dict):
-    """Add S3 storage to the estimate."""
+async def _add_s3(page: Page, svc: dict) -> bool:
+    """Navigate the current page to S3 calculator, fill, save and add."""
     region  = normalize_region(svc["region"])
     storage = svc.get("storage_gb", 100)
 
-    logger.info(f"    → Loading S3 calculator page ({storage} GB)...")
-    page2 = await context.new_page()
-    try:
-        await page2.goto(S3_URL, wait_until="networkidle", timeout=45000)
-        await page2.wait_for_timeout(4000)
-        await accept_cookies(page2)
+    logger.info(f"    → Navigating to S3 calculator ({storage} GB)...")
+    await page.goto(S3_URL, wait_until="networkidle", timeout=45000)
+    await page.wait_for_timeout(4000)
+    await accept_cookies(page)
 
-        await fill_input(page2, "input[aria-label='Description - optional']", svc["name"])
+    await fill_input(page, "input[aria-label='Description - optional']", svc["name"])
 
-        # Region
-        await select_dropdown_verified(page2, "Choose a Region", region)
-        await page2.wait_for_timeout(800)
+    await select_dropdown_verified(page, "Choose a Region", region)
+    await page.wait_for_timeout(800)
 
-        # Storage amount
-        for label_hint in ["S3 Standard storage", "storage amount", "Storage"]:
-            try:
-                await fill_input(page2, f"input[aria-label*='{label_hint}']", str(storage))
-                break
-            except Exception:
-                continue
+    for label_hint in ["S3 Standard storage", "storage amount", "Storage"]:
+        try:
+            await fill_input(page, f"input[aria-label*='{label_hint}']", str(storage))
+            break
+        except Exception:
+            continue
 
-        saved = await _save_and_add_service(page2)
-        if saved:
-            logger.info(f"  ✅ S3 added: {storage} GB ({region})")
-        else:
-            logger.warning(f"  ⚠️ S3 save failed")
-
-    finally:
-        await page2.close()
+    saved = await _save_and_add_service(page)
+    if saved:
+        logger.info(f"  ✅ S3 added: {storage} GB ({region})")
+    else:
+        logger.warning(f"  ⚠️ S3 save failed")
+    return saved
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -310,18 +286,10 @@ async def _add_s3(page: Page, context, svc: dict):
 
 async def generate_combined_calculator_link(results: list[dict]) -> str:
     """
-    Open ONE browser context, add every service using the proven individual
-    calculator URLs, then share the combined estimate.
-
-    Each service opens a new page tab within the same browser context
-    (so all services go into the same estimate), fills in its details using
-    the exact same logic as the working individual calculator, clicks
-    "Save and add service", then closes that tab.
-
-    After all services: navigate to the estimate summary, click Share,
-    capture and return the single combined estimate URL.
+    One browser, one page, all services added sequentially on the SAME tab.
+    After each service: "Save and add service" → back to estimate summary.
+    After all services: Share → one combined estimate URL.
     """
-    # Build the service list
     services: list[dict] = []
     for r in results:
         best     = r.get("best_match", {})
@@ -358,10 +326,7 @@ async def generate_combined_calculator_link(results: list[dict]) -> str:
                 viewport={"width": 1920, "height": 1080},
                 user_agent=USER_AGENT,
             )
-
-            # Open a placeholder page — we need at least one page in context
-            base_page = await context.new_page()
-            await base_page.goto("about:blank")
+            page = await context.new_page()
 
             for idx, svc in enumerate(services):
                 svc_type = svc["type"]
@@ -371,28 +336,38 @@ async def generate_combined_calculator_link(results: list[dict]) -> str:
                 )
                 try:
                     if svc_type in ("ec2", "vm"):
-                        await _add_ec2(base_page, context, svc)
+                        await _add_ec2(page, svc)
                     elif svc_type == "rds":
-                        await _add_rds(base_page, context, svc)
+                        await _add_rds(page, svc)
                     elif svc_type in ("s3", "storage"):
-                        await _add_s3(base_page, context, svc)
+                        await _add_s3(page, svc)
                     else:
-                        await _add_ec2(base_page, context, svc)
+                        await _add_ec2(page, svc)
+
+                    # After "Save and add service", AWS navigates to the estimate
+                    # summary page. Wait for it to settle before next service.
+                    await page.wait_for_timeout(2000)
+
                 except Exception as e:
                     logger.warning(f"  ⚠️ Failed to add {svc['name']}: {e}")
                     continue
 
-            # All services added — now navigate to My Estimate and share
-            logger.info("📋 Navigating to estimate summary to get combined link...")
-            await base_page.goto(
-                "https://calculator.aws/#/estimate",
-                wait_until="networkidle",
-                timeout=30000,
-            )
-            await base_page.wait_for_timeout(3000)
+            # All services added — we should now be on the estimate summary
+            # If not, navigate there explicitly
+            current_url = page.url
+            logger.info(f"📋 Current URL after all services: {current_url[:80]}")
 
-            logger.info("📋 Saving combined estimate...")
-            share_link = await capture_share_link(base_page)
+            if "estimate" not in current_url.lower() and "addService" not in current_url:
+                logger.info("📋 Navigating to estimate summary...")
+                await page.goto(
+                    "https://calculator.aws/#/estimate",
+                    wait_until="networkidle",
+                    timeout=30000,
+                )
+                await page.wait_for_timeout(3000)
+
+            logger.info("📋 Capturing share link...")
+            share_link = await capture_share_link(page)
 
             await browser.close()
 
@@ -417,8 +392,8 @@ async def generate_combined_calculator_link(results: list[dict]) -> str:
 
 def generate_combined_calculator_link_sync(results: list[dict]) -> str:
     """
-    Synchronous entry point. Runs the async generator in a dedicated thread.
-    Uses a result_holder dict to survive ThreadPoolExecutor timeout races.
+    Synchronous entry point. Runs async generator in a dedicated thread.
+    Uses result_holder to survive ThreadPoolExecutor timeout races.
     """
     import concurrent.futures
 
