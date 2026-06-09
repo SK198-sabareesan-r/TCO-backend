@@ -256,16 +256,17 @@ async def _add_rds(page: Page, svc: dict, is_last: bool):
     await select_dropdown_verified(page, "Choose a Region", region)
     await page.wait_for_timeout(1000)
 
-    # Instance class — RDS uses a DROPDOWN (button), not a text input
-    # Try the dropdown approach first
+    # Instance class — try multiple label variants
     instance_set = False
-    try:
-        # Look for instance class dropdown button and select via dropdown
-        await select_dropdown_verified(page, "DB instance class", instance)
-        instance_set = True
-        logger.debug(f"RDS instance set via dropdown: {instance}")
-    except Exception:
-        pass
+    for label_variant in ["DB instance class", "Instance class", "DB Instance Class", "instance class"]:
+        try:
+            result = await select_dropdown_verified(page, label_variant, instance)
+            if result:
+                instance_set = True
+                logger.debug(f"RDS instance set via dropdown '{label_variant}': {instance}")
+                break
+        except Exception:
+            continue
 
     # Fallback: try text input search (older calculator versions)
     if not instance_set:
@@ -541,25 +542,38 @@ def generate_combined_calculator_link_sync(results: list[dict]) -> str:
         logger.error("❌ Playwright is not installed. Run: pip install playwright && playwright install chromium")
         return ""
 
+    # Use a mutable container to capture result even if future.result() times out
+    result_holder = {"link": "", "done": False}
+
     def _run_in_thread():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            return loop.run_until_complete(generate_combined_calculator_link(results))
+            link = loop.run_until_complete(generate_combined_calculator_link(results))
+            result_holder["link"] = link or ""
+            result_holder["done"] = True
+            return link
         except Exception as exc:
             logger.error(f"❌ combined_calculator async error: {exc}", exc_info=True)
+            result_holder["done"] = True
             return ""
         finally:
             loop.close()
 
     try:
-        # Always run in a fresh thread to avoid event-loop conflicts
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             future = ex.submit(_run_in_thread)
-            return future.result(timeout=600)   # 10-minute hard timeout
-    except concurrent.futures.TimeoutError:
-        logger.error("❌ Combined calculator link generation timed out (600 s)")
-        return ""
+            try:
+                link = future.result(timeout=900)   # 15-minute timeout
+                return link or ""
+            except concurrent.futures.TimeoutError:
+                # Check if result was captured before timeout fired
+                if result_holder["link"]:
+                    logger.info(f"⏱️ Timeout fired but link was captured: {result_holder['link'][:60]}...")
+                    return result_holder["link"]
+                logger.error("❌ Combined calculator link generation timed out (900 s)")
+                return ""
     except Exception as e:
         logger.error(f"❌ Combined calculator sync wrapper error: {e}", exc_info=True)
-        return ""
+        # Last chance: return any captured result
+        return result_holder.get("link", "")
