@@ -252,11 +252,12 @@ async def migrate_xlsx(
     
     **Processing Time:** ~25-35 seconds per service
     """
-    # Validate file type
-    if not file.filename.endswith((".xlsx", ".xls")):
+    # Validate file type - support all Excel formats
+    allowed_extensions = (".xlsx", ".xls", ".xlsm", ".xlsb", ".csv")
+    if not file.filename.endswith(allowed_extensions):
         raise HTTPException(
             status_code=400,
-            detail="Invalid file type. Only .xlsx and .xls files are supported."
+            detail=f"Invalid file type. Supported formats: {', '.join(allowed_extensions)}"
         )
     
     # Validate source provider
@@ -339,11 +340,12 @@ async def migrate_json(
     
     **Use Case:** Programmatic consumption, frontend display
     """
-    # Validate file type
-    if not file.filename.endswith((".xlsx", ".xls")):
+    # Validate file type - support all Excel formats
+    allowed_extensions = (".xlsx", ".xls", ".xlsm", ".xlsb", ".csv")
+    if not file.filename.endswith(allowed_extensions):
         raise HTTPException(
             status_code=400,
-            detail="Invalid file type. Only .xlsx and .xls files are supported."
+            detail=f"Invalid file type. Supported formats: {', '.join(allowed_extensions)}"
         )
     
     # Validate source provider

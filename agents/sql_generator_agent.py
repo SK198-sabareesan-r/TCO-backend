@@ -326,6 +326,8 @@ For RDS in Mumbai:
 13. **CRITICAL**: Keep ORDER BY simple - just compare vCPU and memory numerically
 14. **CRITICAL**: For EC2/RDS: Always include WHERE "instancetype" IS NOT NULL AND "instancetype" != ''
 15. **CRITICAL**: For S3/Lambda/VPC: DO NOT use instancetype filter (column doesn't exist)
+16. **CRITICAL**: Always filter out "NA" values BEFORE casting: AND "memory" != 'NA' AND "memory" IS NOT NULL
+17. **CRITICAL**: Same for vcpu: AND "vcpu" != 'NA' AND "vcpu" IS NOT NULL
 
 === OUTPUT FORMAT ===
 Return ONLY valid JSON (no markdown, no explanations):
@@ -350,8 +352,10 @@ Return ONLY valid JSON (no markdown, no explanations):
 Example SQL structure for EC2 (using ONLY KPI allowed fields):
 SELECT "instancetype" AS instance_type, CAST("vcpu" AS INTEGER) AS vcpus, "memory" AS memory_gib
 FROM {table_name}
-WHERE "instancetype" IS NOT NULL 
+WHERE "instancetype" IS NOT NULL
   AND "instancetype" != ''
+  AND "vcpu" != 'NA' AND "vcpu" IS NOT NULL
+  AND "memory" != 'NA' AND "memory" IS NOT NULL
   AND CAST("vcpu" AS INTEGER) BETWEEN %s AND %s
   AND "memory" LIKE %s
   AND "regioncode" = %s
