@@ -341,8 +341,8 @@ def _write_summary_sheet(wb: Workbook, results: list[dict]):
         # Costs
         "AWS OnDemand Hourly", "AWS OnDemand Monthly", "AWS OnDemand Annual",
         "Optimised Plan", "Optimised Monthly", "Optimised Annual",
-        # Calculator Link
-        "AWS Calculator Link",
+        # Calculator Links
+        "AWS Calculator Link (Individual)", "AWS Calculator Link (Combined - All Services)",
     ]
 
     _header_row(ws, title_cols, row=1)
@@ -355,6 +355,7 @@ def _write_summary_sheet(wb: Workbook, results: list[dict]):
         opt     = result.get("optimised", {})
         costs   = result.get("costs", {})
         calc_link = result.get("calculator_link", "")
+        combined_link = result.get("combined_calculator_link", "")
 
         od_monthly   = costs.get("ondemand", {}).get("monthly_usd")
         od_hourly    = costs.get("ondemand", {}).get("hourly_usd")
@@ -377,6 +378,7 @@ def _write_summary_sheet(wb: Workbook, results: list[dict]):
             opt_monthly,
             opt_annual,
             calc_link,
+            combined_link,
         ]
 
         money_cols = {7, 8, 9, 11, 12}
@@ -384,14 +386,17 @@ def _write_summary_sheet(wb: Workbook, results: list[dict]):
         for c_idx, val in enumerate(row_data, 1):
             fmt  = MONEY_FORMAT if c_idx in money_cols else None
             cell = _data_cell(ws, r_idx, c_idx, val, fmt=fmt)
-            
-            # Make calculator link clickable
-            if c_idx == 13 and val:
+
+            # Make calculator links clickable
+            if c_idx == 13 and val:  # Individual link
+                cell.hyperlink = val
+                cell.style = "Hyperlink"
+            elif c_idx == 14 and val:  # Combined link
                 cell.hyperlink = val
                 cell.style = "Hyperlink"
 
     # Column widths
-    widths = [18, 10, 10, 28, 22, 22, 18, 20, 20, 20, 20, 20, 50]
+    widths = [18, 10, 10, 28, 22, 22, 18, 20, 20, 20, 20, 20, 50, 50]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 

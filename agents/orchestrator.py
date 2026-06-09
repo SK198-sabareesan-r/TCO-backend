@@ -364,13 +364,36 @@ def run_migration_pipeline(input_xlsx: str, output_xlsx: Optional[str] = None, s
     # ── 2. Process all services (with incremental saves) ─────────────────────
     results = process_all_services(services, output_path, limit=limit, progress_callback=progress_callback)
 
-    # ── 3. Print console summary ──────────────────────────────────────────────
+    # ── 3. Generate COMBINED calculator link for ALL services ────────────────
+    if progress_callback:
+        progress_callback("🔗 Generating combined AWS Calculator link for all services...", 96)
+
+    logger.info("🔗 Generating COMBINED calculator link for all services...")
+    try:
+        from utils.combined_calculator import generate_combined_calculator_link_sync
+        combined_link = generate_combined_calculator_link_sync(results)
+
+        if combined_link:
+            logger.info(f"✅ Generated combined calculator link: {combined_link[:80]}...")
+            # Add combined link to all results
+            for result in results:
+                result["combined_calculator_link"] = combined_link
+        else:
+            logger.warning("⚠️ Failed to generate combined calculator link")
+            for result in results:
+                result["combined_calculator_link"] = ""
+    except Exception as e:
+        logger.error(f"❌ Error generating combined calculator link: {e}")
+        for result in results:
+            result["combined_calculator_link"] = ""
+
+    # ── 4. Print console summary ──────────────────────────────────────────────
     print_summary(results)
 
-    # ── 4. Print token usage summary ──────────────────────────────────────────
+    # ── 5. Print token usage summary ──────────────────────────────────────────
     print_token_summary()
 
-    # ── 5. Final write output XLSX ────────────────────────────────────────────
+    # ── 6. Final write output XLSX ────────────────────────────────────────────
     write_output_xlsx(results, output_path)
     logger.info(f"Final output written to: {output_path}")
 
