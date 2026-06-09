@@ -245,7 +245,7 @@ def pick_optimised(matches_with_costs: list[dict]) -> dict:
     display_name = best_match.get("instance_type")
     if not display_name:
         # S3/Storage services don't have instance_type, use storageclass
-        storage_class = best_match.get("storageclass", "S3 Standard")
+        storage_class = best_match.get("storageclass") or best_match.get("storage_class") or "Standard"
         display_name = f"S3 {storage_class}"
 
     logger.info(
@@ -452,7 +452,7 @@ def calculate_and_compare_costs(
 
     # For S3, add display name if instance_type is missing
     if best_match and not best_match.get("instance_type"):
-        storage_class = best_match.get("storageclass", "S3 Standard")
+        storage_class = best_match.get("storageclass") or best_match.get("storage_class") or "Standard"
         best_match = best_match.copy()  # Don't modify original
         best_match["instance_type"] = f"S3 {storage_class}"
 

@@ -429,7 +429,7 @@ def _write_all_matches_sheet(wb: Workbook, results: list[dict]):
     ws.sheet_view.showGridLines = False
 
     cols = [
-        "Service Name", "Input vCPUs", "Input Memory (GiB)",
+        "Service Name", "Input vCPUs / Storage", "Input Memory (GiB) / Storage GB",
         "AWS Instance Type", "AWS vCPUs", "AWS Memory (GiB)",
         "Region", "Tenancy",
         "OnDemand Hourly", "OnDemand Monthly", "OnDemand Annual",
@@ -463,11 +463,23 @@ def _write_all_matches_sheet(wb: Workbook, results: list[dict]):
             is_best  = match.get("instance_type") == best.get("instance_type")
             row_fill = OPT_FILL if is_best else MATCH_FILL
 
+            # For S3, build a display name since there's no instance_type
+            display_instance = match.get("instance_type")
+            if not display_instance:
+                sc = match.get("storageclass") or match.get("storage_class") or "Standard"
+                display_instance = f"S3 {sc}"
+
+            # For S3, show storage class info instead of blank vCPUs/memory
+            svc_type = inp.get("service_type", "").lower()
+            match_vcpus  = match.get("vcpus") if svc_type not in ("s3", "storage") else "—"
+            match_memory = match.get("memory_gib") if svc_type not in ("s3", "storage") else "—"
+
             row_data = [
                 svc_name,
-                inp.get("vcpus"), inp.get("memory_gib"),
-                match.get("instance_type"),
-                match.get("vcpus"), match.get("memory_gib"),
+                inp.get("vcpus") if svc_type not in ("s3", "storage") else "—",
+                inp.get("memory_gib") if svc_type not in ("s3", "storage") else f"{inp.get('storage_gb','?')} GB",
+                display_instance,
+                match_vcpus, match_memory,
                 match.get("regioncode") or match.get("region"), match.get("tenancy"),
                 od.get("hourly_usd"), od.get("monthly_usd"), od.get("annual_usd"),
                 sp.get("monthly_usd"), sp.get("annual_usd"), sp.get("discount_percent"),
