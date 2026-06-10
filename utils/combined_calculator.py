@@ -390,6 +390,68 @@ async def _add_s3(page: Page, svc: dict):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Cost comparison logging — Excel cost vs what we send to AWS Calculator
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _log_cost_comparison(services: list[dict]) -> None:
+    """
+    Print a clear side-by-side log of the Excel-calculated cost vs the
+    parameters being sent to the AWS Calculator, so any mismatch is obvious.
+
+    For RDS the Excel 'ondemand.monthly_usd' is INSTANCE-ONLY while the
+    AWS Calculator always adds storage — this log surfaces that gap.
+    """
+    logger.info("=" * 78)
+    logger.info("💰 COST COMPARISON  (Excel cost  vs  AWS Calculator parameters)")
+    logger.info("=" * 78)
+
+    excel_total = 0.0
+    for idx, svc in enumerate(services, 1):
+        costs   = svc.get("_excel_costs", {}) or {}
+        od      = costs.get("ondemand", {}) or {}
+        storage = costs.get("storage", {}) or {}
+
+        od_monthly      = od.get("monthly_usd")
+        od_with_storage = od.get("monthly_usd_with_storage")
+        storage_monthly = storage.get("monthly_usd")
+        svc_type        = svc["type"].upper()
+
+        if isinstance(od_monthly, (int, float)):
+            excel_total += od_monthly
+
+        logger.info(
+            f"[{idx}/{len(services)}] {svc['name']}  ({svc_type}: {svc['instance']})"
+        )
+        logger.info(
+            f"     params sent → region={svc['region']} | os={svc['os']} | "
+            f"engine={svc['database_engine']} | instances={svc['num_instances']} | "
+            f"storage_gb={svc['storage_gb']}"
+        )
+        logger.info(
+            f"     EXCEL OnDemand monthly (instance only): "
+            f"${od_monthly if od_monthly is not None else '?'}"
+        )
+        if storage_monthly is not None:
+            logger.info(
+                f"     EXCEL storage monthly:                  ${storage_monthly}"
+            )
+        if od_with_storage is not None:
+            logger.info(
+                f"     EXCEL OnDemand + storage:               ${od_with_storage}"
+            )
+        if svc_type == "RDS" and od_monthly is not None and od_with_storage is not None:
+            gap = round(od_with_storage - od_monthly, 2)
+            logger.info(
+                f"     ⚠️ RDS gap (calculator adds storage):   +${gap}  "
+                f"→ calculator will show ~${od_with_storage}, Excel shows ${od_monthly}"
+            )
+
+    logger.info("-" * 78)
+    logger.info(f"💰 EXCEL total OnDemand (instance only): ${round(excel_total, 2)}")
+    logger.info("=" * 78)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main combined generator
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -403,6 +465,7 @@ async def generate_combined_calculator_link(results: list[dict]) -> str:
     for r in results:
         best     = r.get("best_match", {})
         inp      = r.get("input", {})
+        costs    = r.get("costs", {})
         itype    = best.get("instance_type") or ""
         svc_type = str(inp.get("service_type", "ec2")).lower()
 
@@ -420,6 +483,8 @@ async def generate_combined_calculator_link(results: list[dict]) -> str:
             "database_engine": best.get("databaseengine") or inp.get("database_engine", "MySQL"),
             "storage_gb":      max(int(inp.get("storage_gb") or 20), 20),
             "num_instances":   int(inp.get("number_of_instances", 1)),
+            # Excel-side cost numbers (for comparison logging only)
+            "_excel_costs":    costs,
         })
 
     if not services:
@@ -427,6 +492,7 @@ async def generate_combined_calculator_link(results: list[dict]) -> str:
         return ""
 
     logger.info(f"🔗 Generating COMBINED calculator link for {len(services)} services...")
+    _log_cost_comparison(services)
 
     try:
         async with async_playwright() as p:
