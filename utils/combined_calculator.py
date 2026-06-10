@@ -103,17 +103,23 @@ async def _add_ec2(page: Page, svc: dict):
     """
     Fill EC2 on current page — IDENTICAL logic to generate_ec2_calculator_link.
     Only difference: calls _save_and_add instead of capturing share link.
+
+    IMPORTANT: storage_gb is NOT passed to the EC2 calculator.
+    The Excel pricing API (get_ec2_costs) returns INSTANCE-ONLY cost with no EBS.
+    Adding storage here would inflate the calculator vs Excel.
     """
     instance_type    = svc["instance"]
     region           = normalize_region(svc["region"])
     operating_system = normalize_os(svc.get("os", "Linux"))
     tenancy          = svc.get("tenancy", "Shared")
     num_instances    = svc.get("num_instances", 1)
-    pricing_model    = "on-demand"
     usage_pct        = 100
-    storage_gb       = svc.get("storage_gb")
+    # DO NOT pass storage_gb — Excel OnDemand is instance-only (no EBS).
+    # Passing storage would add EBS cost to the calculator but NOT to the Excel column.
 
     tenancy_value = tenancy if "Instances" in tenancy or "Host" in tenancy else f"{tenancy} Instances"
+
+    logger.info(f"    EC2 params: instance={instance_type} region={region} os={operating_system} tenancy={tenancy_value} instances={num_instances} storage=none(excluded)")
 
     await page.goto(EC2_URL, wait_until="networkidle", timeout=45000)
     await page.wait_for_timeout(4000)
@@ -127,6 +133,9 @@ async def _add_ec2(page: Page, svc: dict):
     region_success = await select_dropdown_verified(page, "Choose a Region", region)
     if region_success:
         await page.wait_for_timeout(1200)
+        logger.info(f"    ✅ Region set: {region}")
+    else:
+        logger.warning(f"    ⚠️ Region NOT set: {region}")
 
     # Tenancy
     try:
@@ -135,7 +144,9 @@ async def _add_ec2(page: Page, svc: dict):
         pass
 
     # OS
-    await select_dropdown_verified(page, "Operating system", operating_system)
+    os_success = await select_dropdown_verified(page, "Operating system", operating_system)
+    if not os_success:
+        logger.warning(f"    ⚠️ OS NOT set: {operating_system}")
 
     # Workload (consistent)
     try:
@@ -148,19 +159,37 @@ async def _add_ec2(page: Page, svc: dict):
     # Number of instances
     await fill_input(page, "input[aria-label*='Number of instances']", str(num_instances))
 
-    # Instance type search + table select
-    try:
-        search = page.locator("input[aria-label*='Search instance types']")
-        await search.scroll_into_view_if_needed()
-        await search.click(force=True)
-        await search.fill(instance_type)
-        await page.wait_for_timeout(2500)
-        row_radio = page.locator(f"tr:has-text('{instance_type}') input[type='radio']").first
-        await row_radio.scroll_into_view_if_needed()
-        await row_radio.check()
-        await page.wait_for_timeout(600)
-    except Exception as e:
-        logger.debug(f"EC2 instance select error: {e}")
+    # Instance type search + table select — with retry and verification
+    instance_selected = False
+    for attempt in range(3):
+        try:
+            search = page.locator("input[aria-label*='Search instance types']")
+            await search.scroll_into_view_if_needed()
+            await search.click(force=True)
+            await search.fill("")
+            await page.wait_for_timeout(300)
+            await search.fill(instance_type)
+            await page.wait_for_timeout(2500)
+            # Use exact text match on the table row
+            row_radio = page.locator(
+                f"tr:has-text('{instance_type}') input[type='radio']"
+            ).first
+            if await row_radio.count() > 0:
+                await row_radio.scroll_into_view_if_needed()
+                await row_radio.check()
+                await page.wait_for_timeout(800)
+                instance_selected = True
+                logger.info(f"    ✅ EC2 instance selected: {instance_type} (attempt {attempt+1})")
+                break
+            else:
+                logger.warning(f"    ⚠️ EC2 instance row not found for {instance_type} (attempt {attempt+1})")
+                await page.wait_for_timeout(800)
+        except Exception as e:
+            logger.warning(f"    ⚠️ EC2 instance select error attempt {attempt+1}: {e}")
+            await page.wait_for_timeout(800)
+
+    if not instance_selected:
+        logger.warning(f"    ❌ EC2 instance {instance_type} could NOT be selected after 3 attempts")
 
     # Pricing model — on-demand radio
     try:
@@ -177,12 +206,7 @@ async def _add_ec2(page: Page, svc: dict):
     # Usage % = 100
     await fill_input(page, "input[aria-label='Usage']", str(usage_pct))
 
-    # Storage (optional)
-    if storage_gb:
-        try:
-            await fill_input(page, "input[aria-label*='Storage amount']", str(storage_gb))
-        except Exception:
-            pass
+    # NO storage — EC2 OnDemand in Excel is instance-only (no EBS)
 
     # Save and ADD (not "Save and view summary")
     saved = await _save_and_add(page)
@@ -200,16 +224,25 @@ async def _add_rds(page: Page, svc: dict):
     """
     Fill RDS on current page — IDENTICAL logic to generate_rds_calculator_link.
     Only difference: calls _save_and_add instead of capturing share link.
+
+    IMPORTANT: storage_gb is forced to 20 (AWS minimum).
+    The Excel pricing API (get_rds_costs) returns INSTANCE-ONLY cost (ondemand.monthly_usd).
+    Storage is computed separately in ondemand.monthly_usd_with_storage.
+    Using 20 GB minimum here makes the calculator line match the Excel OnDemand column.
     """
     database_engine = svc.get("database_engine") or "MySQL"
     instance_type   = svc["instance"]
     region          = normalize_region(svc["region"])
     deployment      = "Single-AZ"
     storage_type    = "General Purpose SSD (gp2)"
-    storage_gb      = svc.get("storage_gb", 20)
+    # Force 20 GB (AWS RDS minimum) so calculator cost ≈ Excel OnDemand (instance-only).
+    # The input file storage (500/1000 GB) would inflate the calculator vs Excel by hundreds.
+    storage_gb_val  = 20
     num_instances   = svc.get("num_instances", 1)
 
     url = RDS_URLS.get(database_engine, RDS_URLS["MySQL"])
+
+    logger.info(f"    RDS params: instance={instance_type} region={region} engine={database_engine} deployment={deployment} storage=20GB(fixed) instances={num_instances}")
 
     await page.goto(url, wait_until="networkidle", timeout=45000)
     await page.wait_for_timeout(5000)
@@ -242,9 +275,15 @@ async def _add_rds(page: Page, svc: dict):
                     await btn.click()
                     await page.wait_for_timeout(800)
                     await pick_option_safe(page, region)
+                    region_selected = True
                     break
         except Exception:
             pass
+
+    if region_selected:
+        logger.info(f"    ✅ RDS region set: {region}")
+    else:
+        logger.warning(f"    ⚠️ RDS region NOT set: {region}")
 
     await page.wait_for_timeout(1200)
 
@@ -261,28 +300,49 @@ async def _add_rds(page: Page, svc: dict):
     except Exception:
         pass
 
-    # Instance type — find text input with "instance" or "class" in label
-    try:
-        inputs = await page.locator("input[type='text']").all()
-        for inp in inputs:
-            aria_label  = await inp.get_attribute("aria-label")
-            placeholder = await inp.get_attribute("placeholder")
-            if aria_label and ("instance" in aria_label.lower() or "class" in aria_label.lower()):
-                await inp.scroll_into_view_if_needed()
-                await inp.click()
-                await inp.fill(instance_type)
-                await page.wait_for_timeout(1500)
-                await pick_option_safe(page, instance_type)
+    # Instance type — with retry + verification
+    instance_selected = False
+    for attempt in range(3):
+        try:
+            inputs = await page.locator("input[type='text']").all()
+            for inp in inputs:
+                aria_label  = await inp.get_attribute("aria-label")
+                placeholder = await inp.get_attribute("placeholder")
+                if aria_label and ("instance" in aria_label.lower() or "class" in aria_label.lower()):
+                    await inp.scroll_into_view_if_needed()
+                    await inp.click()
+                    await inp.fill("")
+                    await page.wait_for_timeout(200)
+                    await inp.fill(instance_type)
+                    await page.wait_for_timeout(1500)
+                    picked = await pick_option_safe(page, instance_type)
+                    if picked:
+                        instance_selected = True
+                        logger.info(f"    ✅ RDS instance selected: {instance_type} (attempt {attempt+1})")
+                    else:
+                        logger.warning(f"    ⚠️ RDS pick_option_safe failed for {instance_type} (attempt {attempt+1})")
+                    break
+                elif placeholder and ("instance" in placeholder.lower() or "class" in placeholder.lower()):
+                    await inp.scroll_into_view_if_needed()
+                    await inp.click()
+                    await inp.fill("")
+                    await page.wait_for_timeout(200)
+                    await inp.fill(instance_type)
+                    await page.wait_for_timeout(1500)
+                    picked = await pick_option_safe(page, instance_type)
+                    if picked:
+                        instance_selected = True
+                        logger.info(f"    ✅ RDS instance selected: {instance_type} via placeholder (attempt {attempt+1})")
+                    break
+            if instance_selected:
                 break
-            elif placeholder and ("instance" in placeholder.lower() or "class" in placeholder.lower()):
-                await inp.scroll_into_view_if_needed()
-                await inp.click()
-                await inp.fill(instance_type)
-                await page.wait_for_timeout(1500)
-                await pick_option_safe(page, instance_type)
-                break
-    except Exception:
-        pass
+            await page.wait_for_timeout(800)
+        except Exception as e:
+            logger.warning(f"    ⚠️ RDS instance select attempt {attempt+1}: {e}")
+            await page.wait_for_timeout(800)
+
+    if not instance_selected:
+        logger.warning(f"    ❌ RDS instance {instance_type} could NOT be selected after 3 attempts")
 
     # Number of instances
     try:
@@ -312,23 +372,18 @@ async def _add_rds(page: Page, svc: dict):
     except Exception:
         pass
 
-    # Storage amount — use JS to find the right input reliably
-    # The RDS calculator storage label is "Storage amount (GiB)" or similar
-    storage_gb_val = max(int(storage_gb) if storage_gb else 20, 20)
+    # Storage amount — set to 20 GB minimum via JS (matches Excel instance-only cost)
     try:
         filled = await page.evaluate("""
             (storageVal) => {
-                // Find all number/text inputs and look for storage-related ones
                 const inputs = [...document.querySelectorAll('input[type="text"], input[type="number"]')];
                 for (const inp of inputs) {
                     const label = inp.getAttribute('aria-label') || inp.getAttribute('placeholder') || '';
-                    if (label.toLowerCase().includes('storage') && 
+                    if (label.toLowerCase().includes('storage') &&
                         !label.toLowerCase().includes('instance') &&
                         !label.toLowerCase().includes('class')) {
-                        // Clear and fill
                         inp.focus();
                         inp.select();
-                        // Use React-compatible value setter
                         const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
                             window.HTMLInputElement.prototype, 'value').set;
                         nativeInputValueSetter.call(inp, storageVal);
@@ -341,10 +396,9 @@ async def _add_rds(page: Page, svc: dict):
             }
         """, str(storage_gb_val))
         if filled:
+            logger.info(f"    ✅ RDS storage set to {storage_gb_val} GB (minimum, matches Excel instance-only)")
             await page.wait_for_timeout(500)
-            logger.debug(f"RDS storage set to {storage_gb_val} GB via JS")
         else:
-            # Fallback: try aria-label selector directly
             await fill_input(page, "input[aria-label*='Storage amount']", str(storage_gb_val))
     except Exception as e:
         logger.debug(f"RDS storage amount error: {e}")
@@ -444,6 +498,9 @@ def _log_cost_comparison(services: list[dict]) -> None:
             logger.info(
                 f"     ⚠️ RDS gap (calculator adds storage):   +${gap}  "
                 f"→ calculator will show ~${od_with_storage}, Excel shows ${od_monthly}"
+            )
+            logger.info(
+                f"     ✅ FIX APPLIED: forcing calculator storage=20GB so calc cost ≈ Excel OnDemand"
             )
 
     logger.info("-" * 78)
