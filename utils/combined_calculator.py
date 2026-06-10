@@ -451,15 +451,14 @@ def _log_cost_comparison(services: list[dict]) -> None:
     """
     Print a clear side-by-side log of the Excel-calculated cost vs the
     parameters being sent to the AWS Calculator, so any mismatch is obvious.
-
-    For RDS the Excel 'ondemand.monthly_usd' is INSTANCE-ONLY while the
-    AWS Calculator always adds storage — this log surfaces that gap.
     """
     logger.info("=" * 78)
     logger.info("💰 COST COMPARISON  (Excel cost  vs  AWS Calculator parameters)")
     logger.info("=" * 78)
 
     excel_total = 0.0
+    calc_total  = 0.0
+
     for idx, svc in enumerate(services, 1):
         costs   = svc.get("_excel_costs", {}) or {}
         od      = costs.get("ondemand", {}) or {}
@@ -471,40 +470,54 @@ def _log_cost_comparison(services: list[dict]) -> None:
         svc_type        = svc["type"].upper()
 
         if isinstance(od_monthly, (int, float)):
-            excel_total += od_monthly
+            excel_total += float(od_monthly)
 
-        logger.info(
-            f"[{idx}/{len(services)}] {svc['name']}  ({svc_type}: {svc['instance']})"
-        )
-        logger.info(
-            f"     params sent → region={svc['region']} | os={svc['os']} | "
-            f"engine={svc['database_engine']} | instances={svc['num_instances']} | "
-            f"storage_gb={svc['storage_gb']}"
-        )
-        logger.info(
-            f"     EXCEL OnDemand monthly (instance only): "
-            f"${od_monthly if od_monthly is not None else '?'}"
-        )
+        # What the calculator will actually use
+        if svc_type == "EC2":
+            calc_monthly = od_monthly         # no storage sent → matches Excel
+            calc_storage_note = "no EBS (matches Excel)"
+        elif svc_type == "RDS":
+            # storage forced to 20 GB — estimate calculator cost
+            # gp2 pricing ≈ $0.115/GB Single-AZ
+            calc_storage_cost = round(20 * 0.115, 2)  # ~$2.30
+            calc_monthly = round(float(od_monthly or 0) + calc_storage_cost, 2)
+            calc_storage_note = f"20GB forced (~${calc_storage_cost}/mo added)"
+        else:
+            calc_monthly = od_monthly         # S3 = same
+            calc_storage_note = "actual storage"
+
+        if isinstance(calc_monthly, (int, float)):
+            calc_total += float(calc_monthly)
+
+        logger.info(f"  [{idx}/{len(services)}] {svc['name']}  ({svc_type}: {svc['instance']})")
+        logger.info(f"    region={svc['region']} | os={svc['os']} | instances={svc['num_instances']}")
+        if svc_type == "EC2":
+            logger.info(f"    EC2:  storage NOT sent  | storage in input file = {svc['storage_gb']} GB (ignored)")
+        elif svc_type == "RDS":
+            logger.info(f"    RDS:  storage forced=20GB | input file had {svc['storage_gb']} GB")
+            logger.info(f"    RDS:  engine={svc['database_engine']}")
+        logger.info(f"    EXCEL OnDemand (instance only):  ${od_monthly}")
         if storage_monthly is not None:
-            logger.info(
-                f"     EXCEL storage monthly:                  ${storage_monthly}"
-            )
+            logger.info(f"    EXCEL storage ({svc.get('storage_gb')}GB):         ${storage_monthly}")
         if od_with_storage is not None:
-            logger.info(
-                f"     EXCEL OnDemand + storage:               ${od_with_storage}"
-            )
-        if svc_type == "RDS" and od_monthly is not None and od_with_storage is not None:
-            gap = round(od_with_storage - od_monthly, 2)
-            logger.info(
-                f"     ⚠️ RDS gap (calculator adds storage):   +${gap}  "
-                f"→ calculator will show ~${od_with_storage}, Excel shows ${od_monthly}"
-            )
-            logger.info(
-                f"     ✅ FIX APPLIED: forcing calculator storage=20GB so calc cost ≈ Excel OnDemand"
-            )
+            storage_gap = round(float(od_with_storage) - float(od_monthly or 0), 2)
+            logger.info(f"    EXCEL OnDemand + storage:        ${od_with_storage}  (gap=${storage_gap})")
+        logger.info(f"    CALC  expected monthly:          ${calc_monthly}  [{calc_storage_note}]")
+        if od_monthly and calc_monthly:
+            diff = round(float(calc_monthly) - float(od_monthly), 2)
+            if abs(diff) > 1.0:
+                logger.warning(f"    ⚠️  MISMATCH: calc ${calc_monthly} vs Excel ${od_monthly}  (diff={diff:+.2f})")
+            else:
+                logger.info(f"    ✅  MATCH: calc ≈ Excel (diff={diff:+.2f})")
 
     logger.info("-" * 78)
     logger.info(f"💰 EXCEL total OnDemand (instance only): ${round(excel_total, 2)}")
+    logger.info(f"💰 CALC  expected total:                 ${round(calc_total, 2)}")
+    diff_total = round(calc_total - excel_total, 2)
+    if abs(diff_total) > 5:
+        logger.warning(f"⚠️  TOTAL MISMATCH: calc ${round(calc_total,2)} vs Excel ${round(excel_total,2)} (diff={diff_total:+.2f})")
+    else:
+        logger.info(f"✅  TOTAL MATCH (diff={diff_total:+.2f})")
     logger.info("=" * 78)
 
 
