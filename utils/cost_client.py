@@ -1224,9 +1224,20 @@ def get_costs_for_match(service_type: str, aws_instance: dict, input_row: dict) 
     Given a matched AWS instance dict and the original input row,
     call the right pricing endpoint and return unified cost structure.
     """
-    stype  = str(service_type).lower().strip()
-    region = aws_instance.get("region") or input_row.get("region", "US East (N. Virginia)")
-    n      = int(input_row.get("number_of_instances", 1))
+    stype = str(service_type).lower().strip()
+
+    # Region priority: matched instance's regioncode → location → input region → default
+    # The DB stores 'regioncode' (e.g. 'us-east-1') and 'location' (e.g. 'US East (N. Virginia)').
+    # MUST use the matched instance's region, NOT the input file region —
+    # the SQL query already filtered by the correct AWS region.
+    # This must match exactly what combined_calculator.py passes to the browser.
+    region = (
+        aws_instance.get("regioncode")
+        or aws_instance.get("location")
+        or aws_instance.get("region")
+        or input_row.get("region", "US East (N. Virginia)")
+    )
+    n = int(input_row.get("number_of_instances", 1))
 
     fn = SERVICE_ROUTERS.get(stype)
     if not fn:
