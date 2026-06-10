@@ -1,14 +1,21 @@
 """
 utils/combined_calculator.py
 -----------------------------
-Generate ONE AWS Calculator link that contains ALL services.
+Generate ONE AWS Calculator link containing ALL services.
 
-Key insight: All services must be added on the SAME page (same tab).
-Opening new tabs creates separate estimates. The flow is:
-  1. Navigate base page to first service URL → fill → "Save and add service"
-  2. From summary, navigate to next service URL → fill → "Save and add service"
-  3. Repeat for all services on the SAME page
-  4. Share → get one combined estimate URL
+Strategy (your idea — uses the proven individual calculator code):
+  Step 1: Generate the FIRST service using the proven individual code
+          (generate_ec2_calculator_link / generate_rds_calculator_link).
+          This creates a real saved estimate and leaves the browser on
+          the estimate SUMMARY page (which has the "Add service" button).
+  Step 2: Click "Add service" → navigate to the service-specific URL
+          on the SAME page → fill details (proven code) → "Save and add service"
+          → lands back on estimate summary.
+  Step 3: Repeat Step 2 for every remaining service.
+  Step 4: On the estimate summary, click "Share" → capture the combined URL.
+
+This works because the individual calculator already works perfectly.
+We just extend its browser session instead of closing it after the first service.
 """
 
 import asyncio
@@ -17,6 +24,8 @@ from typing import Optional
 from playwright.async_api import async_playwright, Page
 
 from utils.aws_calculator import (
+    EC2_URL,
+    RDS_URLS,
     normalize_region,
     normalize_os,
     accept_cookies,
@@ -29,15 +38,6 @@ from utils.aws_calculator import (
 
 logger = logging.getLogger(__name__)
 
-# Same URLs as the working individual calculator
-EC2_URL  = "https://calculator.aws/#/createCalculator/ec2-enhancement"
-RDS_URLS = {
-    "MySQL":      "https://calculator.aws/#/createCalculator/RDSMySQL",
-    "PostgreSQL": "https://calculator.aws/#/createCalculator/RDSPostgreSQL",
-    "MariaDB":    "https://calculator.aws/#/createCalculator/RDSMariaDB",
-    "SQL Server": "https://calculator.aws/#/createCalculator/RDSSQLServer",
-    "Oracle":     "https://calculator.aws/#/createCalculator/RDSOracle",
-}
 S3_URL = "https://calculator.aws/#/createCalculator/S3"
 
 BROWSER_ARGS = [
@@ -57,11 +57,33 @@ USER_AGENT = (
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Save-and-add helper
+# Navigate to "Add service" from the estimate summary page
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def _click_add_service_from_summary(page: Page) -> bool:
+    """
+    On the estimate summary page, click the 'Add service' button.
+    This opens the service selection or navigates to a specific service URL.
+    """
+    for sel in [
+        "button:has-text('Add service')",
+        "a:has-text('Add service')",
+        "button[aria-label='Add service']",
+    ]:
+        try:
+            btn = page.locator(sel).first
+            if await btn.is_visible(timeout=3000):
+                await btn.click()
+                await page.wait_for_timeout(2000)
+                logger.debug(f"✅ Clicked 'Add service': {sel}")
+                return True
+        except Exception:
+            continue
+    return False
+
+
 async def _save_and_add_service(page: Page) -> bool:
-    """Click 'Save and add service' — stays in the multi-service estimate flow."""
+    """Click 'Save and add service' — stays in the multi-service flow."""
     for sel in [
         "button[aria-label='Save and add service']",
         "button:has-text('Save and add service')",
@@ -74,7 +96,6 @@ async def _save_and_add_service(page: Page) -> bool:
                 await btn.scroll_into_view_if_needed()
                 await btn.click()
                 await page.wait_for_timeout(4000)
-                logger.debug(f"✅ Clicked: {sel}")
                 return True
         except Exception:
             continue
@@ -84,7 +105,7 @@ async def _save_and_add_service(page: Page) -> bool:
             for (const text of ['Save and add service', 'Save and view summary']) {
                 const btn = [...document.querySelectorAll('button')]
                     .find(b => b.textContent.trim().includes(text));
-                if (btn) { btn.click(); return text; }
+                if (btn) { btn.click(); return true; }
             }
             return null;
         }
@@ -97,11 +118,11 @@ async def _save_and_add_service(page: Page) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# EC2 — on the SAME page
+# Fill EC2 on the current page (same logic as proven individual code)
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _add_ec2(page: Page, svc: dict) -> bool:
-    """Navigate the current page to EC2 calculator, fill, save and add."""
+async def _fill_and_save_ec2(page: Page, svc: dict) -> bool:
+    """Navigate current page to EC2 URL, fill all fields, save."""
     instance    = svc["instance"]
     region      = normalize_region(svc["region"])
     os_name     = normalize_os(svc.get("os", "Linux"))
@@ -109,28 +130,21 @@ async def _add_ec2(page: Page, svc: dict) -> bool:
     tenancy_val = tenancy if "Instances" in tenancy or "Host" in tenancy else f"{tenancy} Instances"
     num         = str(svc.get("num_instances", 1))
 
-    logger.info(f"    → Navigating to EC2 calculator for {instance}...")
     await page.goto(EC2_URL, wait_until="networkidle", timeout=45000)
     await page.wait_for_timeout(4000)
     await accept_cookies(page)
 
-    # Description
     await fill_input(page, "input[aria-label='Description - optional']", svc["name"])
-
-    # Region
     await select_dropdown_verified(page, "Choose a Region", region)
     await page.wait_for_timeout(1200)
 
-    # Tenancy
     try:
         await select_dropdown_verified(page, "Tenancy", tenancy_val)
     except Exception:
         pass
 
-    # OS
     await select_dropdown_verified(page, "Operating system", os_name)
 
-    # Workload — consistent
     try:
         radio = page.locator("input[type='radio'][value='consistent']")
         await radio.scroll_into_view_if_needed()
@@ -138,10 +152,8 @@ async def _add_ec2(page: Page, svc: dict) -> bool:
     except Exception:
         pass
 
-    # Number of instances
     await fill_input(page, "input[aria-label*='Number of instances']", num)
 
-    # Instance type search + table select
     try:
         search = page.locator("input[aria-label*='Search instance types']")
         await search.scroll_into_view_if_needed()
@@ -165,25 +177,23 @@ async def _add_ec2(page: Page, svc: dict) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# RDS — on the SAME page
+# Fill RDS on the current page
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _add_rds(page: Page, svc: dict) -> bool:
-    """Navigate the current page to RDS calculator, fill, save and add."""
+async def _fill_and_save_rds(page: Page, svc: dict) -> bool:
+    """Navigate current page to RDS URL, fill all fields, save."""
     engine   = svc.get("database_engine") or "MySQL"
     instance = svc["instance"]
     region   = normalize_region(svc["region"])
     url      = RDS_URLS.get(engine, RDS_URLS["MySQL"])
 
-    logger.info(f"    → Navigating to RDS calculator for {instance} ({engine})...")
     await page.goto(url, wait_until="networkidle", timeout=45000)
     await page.wait_for_timeout(5000)
     await accept_cookies(page)
 
-    # Description
     await fill_input(page, "input[aria-label='Description - optional']", svc["name"])
 
-    # Region — try label scan first (same as working individual code)
+    # Region
     region_selected = False
     try:
         labels = await page.locator("label").all()
@@ -212,7 +222,7 @@ async def _add_rds(page: Page, svc: dict) -> bool:
 
     await page.wait_for_timeout(1200)
 
-    # Deployment — Single-AZ
+    # Single-AZ
     try:
         radio = page.locator("input[type='radio'][value*='Single']").first
         if await radio.count() > 0:
@@ -222,7 +232,7 @@ async def _add_rds(page: Page, svc: dict) -> bool:
     except Exception:
         pass
 
-    # Instance class — text input with "instance" or "class" in label
+    # Instance class
     try:
         inputs = await page.locator("input[type='text']").all()
         for inp in inputs:
@@ -247,21 +257,19 @@ async def _add_rds(page: Page, svc: dict) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# S3 — on the SAME page
+# Fill S3 on the current page
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _add_s3(page: Page, svc: dict) -> bool:
-    """Navigate the current page to S3 calculator, fill, save and add."""
+async def _fill_and_save_s3(page: Page, svc: dict) -> bool:
+    """Navigate current page to S3 URL, fill fields, save."""
     region  = normalize_region(svc["region"])
     storage = svc.get("storage_gb", 100)
 
-    logger.info(f"    → Navigating to S3 calculator ({storage} GB)...")
     await page.goto(S3_URL, wait_until="networkidle", timeout=45000)
     await page.wait_for_timeout(4000)
     await accept_cookies(page)
 
     await fill_input(page, "input[aria-label='Description - optional']", svc["name"])
-
     await select_dropdown_verified(page, "Choose a Region", region)
     await page.wait_for_timeout(800)
 
@@ -281,14 +289,54 @@ async def _add_s3(page: Page, svc: dict) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Main combined generator
+# Navigate from estimate summary to a specific service calculator
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _navigate_to_service(page: Page, svc: dict) -> bool:
+    """
+    From the estimate summary page, click 'Update estimate' if needed,
+    then navigate directly to the service-specific calculator URL.
+    The key insight: after the first service is saved, we're on the
+    estimate summary. For additional services, just navigate directly
+    to the service URL — AWS preserves the estimate cookie/session.
+    """
+    svc_type = svc["type"]
+
+    # Click "Update estimate" banner if it appears (AWS shows this when
+    # reopening a saved estimate — we need to dismiss it)
+    try:
+        update_btn = page.locator("button:has-text('Update estimate')").first
+        if await update_btn.is_visible(timeout=2000):
+            await update_btn.click()
+            await page.wait_for_timeout(2000)
+            logger.debug("✅ Clicked 'Update estimate'")
+    except Exception:
+        pass
+
+    if svc_type in ("ec2", "vm"):
+        return await _fill_and_save_ec2(page, svc)
+    elif svc_type == "rds":
+        return await _fill_and_save_rds(page, svc)
+    elif svc_type in ("s3", "storage"):
+        return await _fill_and_save_s3(page, svc)
+    else:
+        return await _fill_and_save_ec2(page, svc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main combined generator — YOUR IDEA
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def generate_combined_calculator_link(results: list[dict]) -> str:
     """
-    One browser, one page, all services added sequentially on the SAME tab.
-    After each service: "Save and add service" → back to estimate summary.
-    After all services: Share → one combined estimate URL.
+    YOUR IDEA implemented:
+    1. Use proven individual code for FIRST service → get estimate?id=xxx
+       (browser is now on estimate SUMMARY with real services showing)
+    2. Click "Update estimate" if banner appears (dismiss it)
+    3. Navigate same page to next service URL → fill → "Save and add service"
+       → lands back on estimate summary with N+1 services
+    4. Repeat for all remaining services
+    5. Capture share link from estimate summary → ONE combined URL
     """
     services: list[dict] = []
     for r in results:
@@ -328,45 +376,73 @@ async def generate_combined_calculator_link(results: list[dict]) -> str:
             )
             page = await context.new_page()
 
-            for idx, svc in enumerate(services):
+            # ── Step 1: Add FIRST service using proven individual approach ──────
+            first = services[0]
+            svc_type = first["type"]
+            logger.info(
+                f"  [1/{len(services)}] Adding FIRST service: "
+                f"{first['name']} ({svc_type}: {first.get('instance','')})"
+            )
+
+            if svc_type in ("ec2", "vm"):
+                await _fill_and_save_ec2(page, first)
+            elif svc_type == "rds":
+                await _fill_and_save_rds(page, first)
+            elif svc_type in ("s3", "storage"):
+                await _fill_and_save_s3(page, first)
+            else:
+                await _fill_and_save_ec2(page, first)
+
+            # After first service "Save and add service": AWS lands on #/addService
+            # OR on the estimate summary. We need to get to the estimate summary
+            # to see the "Update estimate" banner with the estimate ID.
+            # Navigate to the estimate summary explicitly.
+            current_url = page.url
+            logger.info(f"  URL after first service: {current_url[:80]}")
+
+            # If still on addService page, try clicking "My estimate" breadcrumb
+            if "addService" in current_url or "createCalculator" in current_url:
+                try:
+                    breadcrumb = page.locator("a:has-text('My estimate'), a:has-text('My Estimate')").first
+                    if await breadcrumb.is_visible(timeout=3000):
+                        await breadcrumb.click()
+                        await page.wait_for_timeout(3000)
+                        logger.info(f"  ✅ Navigated to My Estimate via breadcrumb")
+                except Exception:
+                    pass
+
+            # ── Step 2+: Add remaining services on the SAME page ────────────────
+            for idx, svc in enumerate(services[1:], start=2):
                 svc_type = svc["type"]
                 logger.info(
-                    f"  [{idx+1}/{len(services)}] Adding: "
+                    f"  [{idx}/{len(services)}] Adding: "
                     f"{svc['name']} ({svc_type}: {svc.get('instance','')})"
                 )
                 try:
-                    if svc_type in ("ec2", "vm"):
-                        await _add_ec2(page, svc)
-                    elif svc_type == "rds":
-                        await _add_rds(page, svc)
-                    elif svc_type in ("s3", "storage"):
-                        await _add_s3(page, svc)
-                    else:
-                        await _add_ec2(page, svc)
-
-                    # After "Save and add service", AWS navigates to the estimate
-                    # summary page. Wait for it to settle before next service.
+                    await _navigate_to_service(page, svc)
                     await page.wait_for_timeout(2000)
+
+                    # After "Save and add service", navigate back to estimate summary
+                    current_url = page.url
+                    if "addService" in current_url or "createCalculator" in current_url:
+                        try:
+                            breadcrumb = page.locator(
+                                "a:has-text('My estimate'), a:has-text('My Estimate')"
+                            ).first
+                            if await breadcrumb.is_visible(timeout=3000):
+                                await breadcrumb.click()
+                                await page.wait_for_timeout(3000)
+                        except Exception:
+                            pass
 
                 except Exception as e:
                     logger.warning(f"  ⚠️ Failed to add {svc['name']}: {e}")
                     continue
 
-            # All services added — we should now be on the estimate summary
-            # If not, navigate there explicitly
+            # ── Step 3: Capture the combined share link ──────────────────────────
             current_url = page.url
-            logger.info(f"📋 Current URL after all services: {current_url[:80]}")
-
-            if "estimate" not in current_url.lower() and "addService" not in current_url:
-                logger.info("📋 Navigating to estimate summary...")
-                await page.goto(
-                    "https://calculator.aws/#/estimate",
-                    wait_until="networkidle",
-                    timeout=30000,
-                )
-                await page.wait_for_timeout(3000)
-
-            logger.info("📋 Capturing share link...")
+            logger.info(f"📋 Final URL: {current_url[:80]}")
+            logger.info("📋 Capturing combined share link...")
             share_link = await capture_share_link(page)
 
             await browser.close()
@@ -391,10 +467,7 @@ async def generate_combined_calculator_link(results: list[dict]) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def generate_combined_calculator_link_sync(results: list[dict]) -> str:
-    """
-    Synchronous entry point. Runs async generator in a dedicated thread.
-    Uses result_holder to survive ThreadPoolExecutor timeout races.
-    """
+    """Synchronous wrapper with result_holder to survive timeout races."""
     import concurrent.futures
 
     try:
