@@ -206,11 +206,7 @@ async def _add_rds(page: Page, svc: dict):
     region          = normalize_region(svc["region"])
     deployment      = "Single-AZ"
     storage_type    = "General Purpose SSD (gp2)"
-    # Use minimal 20 GB storage so the calculator's RDS cost matches the
-    # Excel "AWS OnDemand Monthly" which is INSTANCE-ONLY (no storage).
-    # The input file's large storage (500/1000 GB) would inflate the
-    # calculator cost vs the Excel instance-only number.
-    storage_gb      = 20
+    storage_gb      = svc.get("storage_gb", 20)
     num_instances   = svc.get("num_instances", 1)
 
     url = RDS_URLS.get(database_engine, RDS_URLS["MySQL"])
