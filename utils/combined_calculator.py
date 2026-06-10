@@ -154,6 +154,13 @@ async def _fill_and_save_ec2(page: Page, svc: dict) -> bool:
 
     await fill_input(page, "input[aria-label*='Number of instances']", num)
 
+    # ── Usage % — MUST be set to 100 so calculator matches our pricing ──────
+    # Without this, calculator defaults to 50% = half the monthly cost
+    try:
+        await fill_input(page, "input[aria-label='Usage']", "100")
+    except Exception:
+        pass
+
     try:
         search = page.locator("input[aria-label*='Search instance types']")
         await search.scroll_into_view_if_needed()
@@ -247,6 +254,29 @@ async def _fill_and_save_rds(page: Page, svc: dict) -> bool:
                 break
     except Exception as e:
         logger.debug(f"RDS instance input error: {e}")
+
+    # ── Storage amount — MUST be set to match Excel pricing ────────────────
+    # Default is 3000 GB which massively inflates costs vs our $0 storage calc.
+    # Set to 20 GB (minimum realistic) to match our RDS cost_client calculation
+    # which uses ~$0 storage by default (storage not included in on-demand price).
+    storage_gb = svc.get("storage_gb", 20)
+    if not storage_gb or float(storage_gb) == 0:
+        storage_gb = 20
+    try:
+        # Find storage amount input and set it
+        all_inputs = await page.locator("input[type='text'], input[type='number']").all()
+        for inp in all_inputs:
+            aria = await inp.get_attribute("aria-label") or ""
+            if "storage" in aria.lower() and ("amount" in aria.lower() or "size" in aria.lower()):
+                await inp.scroll_into_view_if_needed()
+                await inp.click()
+                await inp.triple_click()   # select all existing text
+                await inp.fill(str(int(storage_gb)))
+                await page.wait_for_timeout(500)
+                logger.debug(f"RDS storage set to {storage_gb} GB")
+                break
+    except Exception as e:
+        logger.debug(f"RDS storage amount error: {e}")
 
     saved = await _save_and_add_service(page)
     if saved:
