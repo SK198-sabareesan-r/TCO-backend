@@ -312,18 +312,42 @@ async def _add_rds(page: Page, svc: dict):
     except Exception:
         pass
 
-    # Storage amount
+    # Storage amount — use JS to find the right input reliably
+    # The RDS calculator storage label is "Storage amount (GiB)" or similar
+    storage_gb_val = max(int(storage_gb) if storage_gb else 20, 20)
     try:
-        inputs = await page.locator("input[type='text'], input[type='number']").all()
-        for inp in inputs:
-            aria_label = await inp.get_attribute("aria-label")
-            if aria_label and "storage" in aria_label.lower() and "amount" in aria_label.lower():
-                await inp.scroll_into_view_if_needed()
-                await inp.click()
-                await inp.fill(str(storage_gb))
-                break
-    except Exception:
-        pass
+        filled = await page.evaluate("""
+            (storageVal) => {
+                // Find all number/text inputs and look for storage-related ones
+                const inputs = [...document.querySelectorAll('input[type="text"], input[type="number"]')];
+                for (const inp of inputs) {
+                    const label = inp.getAttribute('aria-label') || inp.getAttribute('placeholder') || '';
+                    if (label.toLowerCase().includes('storage') && 
+                        !label.toLowerCase().includes('instance') &&
+                        !label.toLowerCase().includes('class')) {
+                        // Clear and fill
+                        inp.focus();
+                        inp.select();
+                        // Use React-compatible value setter
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                            window.HTMLInputElement.prototype, 'value').set;
+                        nativeInputValueSetter.call(inp, storageVal);
+                        inp.dispatchEvent(new Event('input', { bubbles: true }));
+                        inp.dispatchEvent(new Event('change', { bubbles: true }));
+                        return true;
+                    }
+                }
+                return false;
+            }
+        """, str(storage_gb_val))
+        if filled:
+            await page.wait_for_timeout(500)
+            logger.debug(f"RDS storage set to {storage_gb_val} GB via JS")
+        else:
+            # Fallback: try aria-label selector directly
+            await fill_input(page, "input[aria-label*='Storage amount']", str(storage_gb_val))
+    except Exception as e:
+        logger.debug(f"RDS storage amount error: {e}")
 
     # Save and ADD
     saved = await _save_and_add(page)
@@ -394,7 +418,7 @@ async def generate_combined_calculator_link(results: list[dict]) -> str:
             "os":              best.get("operatingsystem") or inp.get("operating_system", "Linux"),
             "tenancy":         best.get("tenancy") or inp.get("tenancy", "Shared"),
             "database_engine": best.get("databaseengine") or inp.get("database_engine", "MySQL"),
-            "storage_gb":      inp.get("storage_gb") or 0,
+            "storage_gb":      max(int(inp.get("storage_gb") or 20), 20),
             "num_instances":   int(inp.get("number_of_instances", 1)),
         })
 
