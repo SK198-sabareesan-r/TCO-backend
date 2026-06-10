@@ -413,6 +413,11 @@ def _write_summary_sheet(wb: Workbook, results: list[dict]):
     ws.row_dimensions[2].height = 36
 
     # ── Rows 3+: Data ─────────────────────────────────────────────────────────
+    od_monthly_total  = 0.0
+    od_annual_total   = 0.0
+    opt_monthly_total = 0.0
+    opt_annual_total  = 0.0
+
     for r_idx, result in enumerate(results, start=3):
         inp   = result.get("input", {})
         best  = result.get("best_match", {})
@@ -440,7 +445,7 @@ def _write_summary_sheet(wb: Workbook, results: list[dict]):
             opt_plan,
             opt_monthly,
             opt_annual,
-            result.get("notes", ""),   # notes instead of individual link
+            result.get("notes", ""),
         ]
 
         money_cols = {7, 8, 9, 11, 12}
@@ -448,6 +453,25 @@ def _write_summary_sheet(wb: Workbook, results: list[dict]):
         for c_idx, val in enumerate(row_data, 1):
             fmt  = MONEY_FORMAT if c_idx in money_cols else None
             cell = _data_cell(ws, r_idx, c_idx, val, fmt=fmt)
+
+        # Accumulate totals
+        od_monthly_total  += float(od_monthly  or 0)
+        od_annual_total   += float(od_annual   or 0)
+        opt_monthly_total += float(opt_monthly or 0)
+        opt_annual_total  += float(opt_annual  or 0)
+
+    # ── TOTAL row ─────────────────────────────────────────────────────────────
+    total_row = len(results) + 3
+    _data_cell(ws, total_row, 1, "TOTAL", bold=True, fill=SECTION_FILL)
+    for c in range(2, 7):
+        _data_cell(ws, total_row, c, "", fill=SECTION_FILL)
+    _data_cell(ws, total_row, 7,  "",                             fill=SECTION_FILL)   # hourly — no sum
+    _data_cell(ws, total_row, 8,  round(od_monthly_total,  2), fmt=MONEY_FORMAT, bold=True, fill=SECTION_FILL)
+    _data_cell(ws, total_row, 9,  round(od_annual_total,   2), fmt=MONEY_FORMAT, bold=True, fill=SECTION_FILL)
+    _data_cell(ws, total_row, 10, "",                             fill=SECTION_FILL)   # plan label — no sum
+    _data_cell(ws, total_row, 11, round(opt_monthly_total, 2), fmt=MONEY_FORMAT, bold=True, fill=OPT_FILL)
+    _data_cell(ws, total_row, 12, round(opt_annual_total,  2), fmt=MONEY_FORMAT, bold=True, fill=OPT_FILL)
+    _data_cell(ws, total_row, 13, "",                             fill=SECTION_FILL)
 
     # Column widths
     widths = [22, 10, 10, 28, 22, 22, 18, 20, 20, 22, 20, 20, 30]
