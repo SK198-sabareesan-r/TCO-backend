@@ -233,7 +233,9 @@ async def _add_rds(page: Page, svc: dict):
     database_engine = svc.get("database_engine") or "MySQL"
     instance_type   = svc["instance"]
     region          = normalize_region(svc["region"])
-    deployment      = "Single-AZ"
+    # Use real multi_az from input — matches what the Pricing API used in Excel
+    multi_az        = svc.get("multi_az", True)
+    deployment      = "Multi-AZ" if multi_az else "Single-AZ"
     storage_type    = "General Purpose SSD (gp2)"
     # Use real storage_gb from input file — matches what the Pricing API used in Excel.
     # AWS enforces a 20GB minimum; enforce it here too.
@@ -287,9 +289,9 @@ async def _add_rds(page: Page, svc: dict):
 
     await page.wait_for_timeout(1200)
 
-    # Deployment — Single-AZ radio
+    # Deployment — Single-AZ or Multi-AZ radio based on real input
     try:
-        if "Single" in deployment:
+        if not multi_az:
             radio = page.locator("input[type='radio'][value*='Single']").first
         else:
             radio = page.locator("input[type='radio'][value*='Multi']").first
@@ -549,6 +551,7 @@ async def generate_combined_calculator_link(results: list[dict]) -> str:
             "os":              best.get("operatingsystem") or inp.get("operating_system", "Linux"),
             "tenancy":         best.get("tenancy") or inp.get("tenancy", "Shared"),
             "database_engine": best.get("databaseengine") or inp.get("database_engine", "MySQL"),
+            "multi_az":        inp.get("multi_az", True),   # pass through — must match Pricing API
             "storage_gb":      max(int(inp.get("storage_gb") or 20), 20),
             "num_instances":   int(inp.get("number_of_instances", 1)),
             # Excel-side cost numbers (for comparison logging only)
