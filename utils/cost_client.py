@@ -623,6 +623,75 @@ def calculate_rds_reserved_price(ondemand_price: float, term: str, payment_optio
     return round(effective_hourly, 6), round(discount * 100, 2)
 
 
+@lru_cache(maxsize=256)
+def get_rds_storage_price(region: str, database_engine: str = "MySQL", multi_az: bool = False) -> Optional[float]:
+    """
+    Get real RDS gp2 storage price ($/GB-month) from AWS Pricing API.
+
+    Returns the per-GB-per-month price for General Purpose SSD (gp2) storage.
+    Multi-AZ storage is billed at 2× the Single-AZ rate.
+
+    Note: region must already be in AWS Pricing API display-name format.
+    """
+    if not AWS_API_AVAILABLE:
+        return None
+
+    # Map engine to AWS Pricing API databaseEngine value
+    engine_map = {
+        "MySQL":              "MySQL",
+        "PostgreSQL":         "PostgreSQL",
+        "MariaDB":            "MariaDB",
+        "SQL Server":         "SQL Server",
+        "Oracle":             "Oracle",
+        "Aurora MySQL":       "Aurora MySQL",
+        "Aurora PostgreSQL":  "Aurora PostgreSQL",
+    }
+    api_engine = engine_map.get(database_engine, "MySQL")
+    deployment = "Multi-AZ" if multi_az else "Single-AZ"
+
+    try:
+        response = pricing_client.get_products(
+            ServiceCode="AmazonRDS",
+            Filters=[
+                {"Type": "TERM_MATCH", "Field": "location",          "Value": region},
+                {"Type": "TERM_MATCH", "Field": "databaseEngine",    "Value": api_engine},
+                {"Type": "TERM_MATCH", "Field": "deploymentOption",  "Value": deployment},
+                {"Type": "TERM_MATCH", "Field": "volumeType",        "Value": "General Purpose"},
+            ],
+            MaxResults=10,
+        )
+
+        if not response["PriceList"]:
+            logger.debug(f"No RDS storage price found for {api_engine} {deployment} in {region}")
+            return None
+
+        prices = []
+        for item_str in response["PriceList"]:
+            item = json.loads(item_str)
+            attrs = item.get("product", {}).get("attributes", {})
+            # Must be storage product (not instance)
+            if attrs.get("productFamily", "").lower() not in ("database storage", "storage"):
+                continue
+            for term in item.get("terms", {}).get("OnDemand", {}).values():
+                for dim in term["priceDimensions"].values():
+                    unit = dim.get("unit", "")
+                    if "GB" in unit:
+                        price = float(dim["pricePerUnit"]["USD"])
+                        if price > 0:
+                            prices.append(price)
+
+        if prices:
+            # Use minimum price (first-GB tier is highest; we want baseline)
+            price_per_gb = min(prices)
+            logger.debug(f"RDS storage price: ${price_per_gb}/GB-mo ({api_engine} {deployment} {region})")
+            return price_per_gb
+
+    except Exception as e:
+        logger.error(f"RDS storage price API error: {e}")
+
+    return None
+
+
 def get_rds_costs(
     instance_type: str,
     region: str = "US East (N. Virginia)",
@@ -633,64 +702,104 @@ def get_rds_costs(
 ) -> Optional[dict]:
     """
     Get RDS costs with On-Demand and Reserved Instance pricing.
-    Uses real AWS Pricing API.
+    Uses real AWS Pricing API for BOTH instance and storage costs.
+
+    monthly_usd = instance cost + storage cost (from real API, no hardcoding).
+    This matches what AWS Calculator shows for the same parameters.
     """
     # Validate instance_type
     if not instance_type or instance_type == "None":
         logger.warning(f"Invalid RDS instance_type: {instance_type}")
         return None
-    
+
     # Normalize region ONCE before calling pricing functions
     region = normalize_region(region)
-    
+
     od_hourly = get_rds_ondemand_price(instance_type, region, database_engine, multi_az)
     if od_hourly is None:
         logger.warning(f"RDS price not found for {instance_type} in {region}")
         return None
 
-    od_monthly_primary = round(od_hourly * HOURS_PER_MONTH, 2)
-    od_annual_primary = round(od_monthly_primary * 12, 2)
+    od_instance_monthly = round(od_hourly * HOURS_PER_MONTH, 2)
+    od_instance_annual  = round(od_instance_monthly * 12, 2)
+
+    # ── Real storage price from AWS Pricing API ──────────────────────────────
+    # Always use Single-AZ price per GB, then double if Multi-AZ.
+    # AWS Calculator uses the same logic.
+    storage_price_per_gb = get_rds_storage_price(region, database_engine, multi_az=False)
+
+    # Fallback: if API unavailable, use well-known gp2 Single-AZ prices by region
+    if not storage_price_per_gb:
+        FALLBACK_STORAGE_PRICES = {
+            "Asia Pacific (Mumbai)":       0.138,
+            "Asia Pacific (Singapore)":    0.138,
+            "Asia Pacific (Tokyo)":        0.138,
+            "Asia Pacific (Seoul)":        0.138,
+            "Asia Pacific (Sydney)":       0.138,
+            "Europe (Ireland)":            0.115,
+            "Europe (Frankfurt)":          0.119,
+            "Europe (London)":             0.131,
+            "US East (N. Virginia)":       0.115,
+            "US East (Ohio)":              0.115,
+            "US West (Oregon)":            0.115,
+            "US West (N. California)":     0.138,
+        }
+        storage_price_per_gb = FALLBACK_STORAGE_PRICES.get(region, 0.115)
+        logger.debug(f"RDS storage API unavailable, using fallback ${storage_price_per_gb}/GB for {region}")
+
+    # Compute storage cost for the actual storage_gb from input file
+    effective_storage_gb = max(float(storage_gb or 0), 20)   # AWS minimum is 20 GB
+    storage_monthly_single_az = round(effective_storage_gb * storage_price_per_gb, 2)
+    storage_monthly = round(storage_monthly_single_az * 2, 2) if multi_az else storage_monthly_single_az
+
+    logger.info(
+        f"💾 RDS pricing: {instance_type} {region} | "
+        f"instance=${od_instance_monthly}/mo | "
+        f"storage={effective_storage_gb}GB × ${storage_price_per_gb}/GB"
+        f"{' × 2(Multi-AZ)' if multi_az else ''} = ${storage_monthly}/mo | "
+        f"total=${round(od_instance_monthly + storage_monthly, 2)}/mo"
+    )
+
+    od_monthly = round(od_instance_monthly + storage_monthly, 2)
+    od_annual  = round(od_monthly * 12, 2)
 
     result = {
         "ondemand": {
-            "hourly_usd":  od_hourly,
-            "monthly_usd": od_monthly_primary,
-            "annual_usd":  od_annual_primary,
+            "hourly_usd":              od_hourly,
+            "monthly_usd":             od_monthly,   # instance + storage (matches calculator)
+            "annual_usd":              od_annual,
+            "instance_only_monthly":   od_instance_monthly,
+            "storage_monthly":         storage_monthly,
+            "storage_gb_used":         effective_storage_gb,
+            "storage_price_per_gb":    storage_price_per_gb,
         },
     }
 
-    # Calculate Reserved Instance pricing (1yr no upfront as best savings plan)
+    # ── Reserved Instance pricing ─────────────────────────────────────────────
     ri_hourly, savings_pct = calculate_rds_reserved_price(od_hourly, "1yr", "no_upfront")
-    ri_monthly = round(ri_hourly * HOURS_PER_MONTH, 2)
-    ri_annual = round(ri_monthly * 12, 2)
-    
+    ri_instance_monthly = round(ri_hourly * HOURS_PER_MONTH, 2)
+    ri_monthly = round(ri_instance_monthly + storage_monthly, 2)   # RI instance + same storage
+    ri_annual  = round(ri_monthly * 12, 2)
+
     result["best_savings_plan"] = {
-        "plan_label": "Reserved Instance 1yr No Upfront",
-        "hourly_usd": ri_hourly,
-        "monthly_usd": ri_monthly,
-        "annual_usd": ri_annual,
-        "discount_percent": savings_pct,
-        "monthly_savings_usd": round(od_monthly_primary - ri_monthly, 2),
-        "annual_savings_usd": round(od_annual_primary - ri_annual, 2),
+        "plan_label":          "Reserved Instance 1yr No Upfront",
+        "hourly_usd":          ri_hourly,
+        "monthly_usd":         ri_monthly,
+        "annual_usd":          ri_annual,
+        "discount_percent":    savings_pct,
+        "monthly_savings_usd": round(od_monthly - ri_monthly, 2),
+        "annual_savings_usd":  round(od_annual  - ri_annual,  2),
     }
 
-    # Add storage costs
-    if storage_gb > 0:
-        storage_price_per_gb = 0.115  # gp3 pricing
-        storage_monthly = round(storage_gb * storage_price_per_gb, 2)
-        if multi_az:
-            storage_monthly *= 2
-        
-        result["storage"] = {
-            "storage_gb": storage_gb,
-            "storage_type": "gp3",
-            "monthly_usd": storage_monthly,
-            "annual_usd": round(storage_monthly * 12, 2),
-        }
-        
-        # Add storage to total costs
-        result["ondemand"]["monthly_usd_with_storage"] = round(od_monthly_primary + storage_monthly, 2)
-        result["best_savings_plan"]["monthly_usd_with_storage"] = round(ri_monthly + storage_monthly, 2)
+    # ── Storage detail block (for reporting / Excel reference) ────────────────
+    result["storage"] = {
+        "storage_gb":        effective_storage_gb,
+        "storage_type":      "gp2 General Purpose SSD",
+        "price_per_gb":      storage_price_per_gb,
+        "multi_az":          multi_az,
+        "monthly_usd":       storage_monthly,
+        "annual_usd":        round(storage_monthly * 12, 2),
+    }
 
     return result
 

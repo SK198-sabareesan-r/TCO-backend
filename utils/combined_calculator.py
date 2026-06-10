@@ -235,14 +235,14 @@ async def _add_rds(page: Page, svc: dict):
     region          = normalize_region(svc["region"])
     deployment      = "Single-AZ"
     storage_type    = "General Purpose SSD (gp2)"
-    # Force 20 GB (AWS RDS minimum) so calculator cost ≈ Excel OnDemand (instance-only).
-    # The input file storage (500/1000 GB) would inflate the calculator vs Excel by hundreds.
-    storage_gb_val  = 20
+    # Use real storage_gb from input file — matches what the Pricing API used in Excel.
+    # AWS enforces a 20GB minimum; enforce it here too.
+    storage_gb_val  = max(int(svc.get("storage_gb") or 20), 20)
     num_instances   = svc.get("num_instances", 1)
 
     url = RDS_URLS.get(database_engine, RDS_URLS["MySQL"])
 
-    logger.info(f"    RDS params: instance={instance_type} region={region} engine={database_engine} deployment={deployment} storage=20GB(fixed) instances={num_instances}")
+    logger.info(f"    RDS params: instance={instance_type} region={region} engine={database_engine} deployment={deployment} storage={storage_gb_val}GB instances={num_instances}")
 
     await page.goto(url, wait_until="networkidle", timeout=45000)
     await page.wait_for_timeout(5000)
@@ -396,7 +396,7 @@ async def _add_rds(page: Page, svc: dict):
             }
         """, str(storage_gb_val))
         if filled:
-            logger.info(f"    ✅ RDS storage set to {storage_gb_val} GB (minimum, matches Excel instance-only)")
+            logger.info(f"    ✅ RDS storage set to {storage_gb_val} GB via JS")
             await page.wait_for_timeout(500)
         else:
             await fill_input(page, "input[aria-label*='Storage amount']", str(storage_gb_val))
@@ -477,11 +477,9 @@ def _log_cost_comparison(services: list[dict]) -> None:
             calc_monthly = od_monthly         # no storage sent → matches Excel
             calc_storage_note = "no EBS (matches Excel)"
         elif svc_type == "RDS":
-            # storage forced to 20 GB — estimate calculator cost
-            # gp2 pricing ≈ $0.115/GB Single-AZ
-            calc_storage_cost = round(20 * 0.115, 2)  # ~$2.30
-            calc_monthly = round(float(od_monthly or 0) + calc_storage_cost, 2)
-            calc_storage_note = f"20GB forced (~${calc_storage_cost}/mo added)"
+            # Storage from input file passed to calculator — same as what Pricing API used
+            calc_monthly = od_monthly         # Excel OnDemand already = instance + real storage
+            calc_storage_note = f"real storage {svc.get('storage_gb')}GB (from Pricing API)"
         else:
             calc_monthly = od_monthly         # S3 = same
             calc_storage_note = "actual storage"
